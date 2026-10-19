@@ -1,4 +1,4 @@
-# auto-sign
+# netypareo-auto-sign-in
 
 Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
@@ -13,11 +13,11 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 The first config file found is used:
 
 1. `--config PATH`
-2. `./auto-sign.toml` (current directory)
+2. `./netypareo-auto-sign-in.toml` (current directory)
 3. Per-platform:
-   - Linux: `$XDG_CONFIG_HOME/auto-sign/config.toml` (default `~/.config/auto-sign/config.toml`)
-   - macOS: `~/Library/Application Support/auto-sign/config.toml`, then the Linux path
-   - Windows: `%APPDATA%\auto-sign\config.toml`
+   - Linux: `$XDG_CONFIG_HOME/netypareo-auto-sign-in/config.toml` (default `~/.config/netypareo-auto-sign-in/config.toml`)
+   - macOS: `~/Library/Application Support/netypareo-auto-sign-in/config.toml`, then the Linux path
+   - Windows: `%APPDATA%\netypareo-auto-sign-in\config.toml`
 
 ```toml
 login = "040-xxxxx"
@@ -42,10 +42,10 @@ If you store a plain `password`, run `chmod 600` on the file. The script warns w
 ## Usage
 
 ```sh
-uv run auto_sign.py              # list today's unsigned sessions, pick which to sign
-uv run auto_sign.py --all        # sign every open session without asking
-uv run auto_sign.py --dry-run    # list and select, do not sign
-uv run auto_sign.py --date 20/10/2026 --verbose
+uv run netypareo_auto_sign_in.py              # list today's unsigned sessions, pick which to sign
+uv run netypareo_auto_sign_in.py --all        # sign every open session without asking
+uv run netypareo_auto_sign_in.py --dry-run    # list and select, do not sign
+uv run netypareo_auto_sign_in.py --date 20/10/2026 --verbose
 ```
 
 At the prompt, enter `1,3`, `1-3`, or `a` for all open sessions. Press Enter with no input to cancel.

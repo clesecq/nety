@@ -1,4 +1,4 @@
 *.har
-auto-sign.toml
+netypareo-auto-sign-in.toml
 signature.png
 __pycache__/
