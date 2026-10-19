@@ -11,6 +11,7 @@ import getpass
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import tomllib
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import requests
 
+APP = "auto-sign"
 BASE = "https://extranet.cfai-alsace.fr/netypareo/index.php"
 HOME = f"{BASE}/apprenant/accueil"
 XHR = {"X-Requested-With": "XMLHttpRequest", "Referer": HOME}
@@ -31,18 +33,77 @@ class AuthError(Exception):
     pass
 
 
+class ConfigError(Exception):
+    pass
+
+
 def log(msg):
     if VERBOSE:
         print(f"[debug] {msg}", file=sys.stderr)
 
 
-def credentials(config_path):
-    login = os.environ.get("NETYPAREO_LOGIN")
-    password = os.environ.get("NETYPAREO_PASSWORD")
-    if config_path.is_file():
-        cfg = tomllib.loads(config_path.read_text())
-        login = login or cfg.get("login")
-        password = password or cfg.get("password")
+def config_paths():
+    """Candidate config files, in lookup order."""
+    paths = [Path.cwd() / f"{APP}.toml"]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            paths.append(Path(appdata) / APP / "config.toml")
+        return paths
+    if sys.platform == "darwin":
+        paths.append(Path.home() / "Library" / "Application Support" / APP / "config.toml")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    paths.append(Path(xdg) / APP / "config.toml")
+    return paths
+
+
+def load_config(explicit):
+    """Return (config dict, path) of the first config file found, or ({}, None)."""
+    if explicit:
+        if not explicit.is_file():
+            raise ConfigError(f"config file not found: {explicit}")
+        candidates = [explicit]
+    else:
+        candidates = config_paths()
+    for path in candidates:
+        if path.is_file():
+            log(f"config: {path}")
+            try:
+                cfg = tomllib.loads(path.read_text(encoding="utf-8"))
+            except tomllib.TOMLDecodeError as e:
+                raise ConfigError(f"{path}: {e}")
+            if os.name == "posix" and "password" in cfg and path.stat().st_mode & 0o077:
+                print(f"Warning: {path} holds a password and is readable by others "
+                      f"(chmod 600 it).", file=sys.stderr)
+            return cfg, path
+    log("config: none found in " + ", ".join(map(str, candidates)))
+    return {}, None
+
+
+def resolve(cfg, key):
+    """Value of `key`, or the output of `key_command`, or None."""
+    command = cfg.get(f"{key}_command")
+    if key in cfg and command is not None:
+        raise ConfigError(f"set either '{key}' or '{key}_command', not both")
+    if command is None:
+        return cfg.get(key)
+    if not isinstance(command, (str, list)):
+        raise ConfigError(f"'{key}_command' must be a string or a list")
+    try:
+        result = subprocess.run(command, shell=isinstance(command, str),
+                                capture_output=True, text=True)
+    except OSError as e:
+        raise ConfigError(f"'{key}_command' failed: {e}")
+    out = result.stdout.splitlines()[0].strip() if result.stdout.strip() else ""
+    if result.returncode != 0 or not out:
+        detail = result.stderr.strip() or f"exit code {result.returncode}, empty output"
+        raise ConfigError(f"'{key}_command' failed: {detail}")
+    return out
+
+
+def credentials(cfg):
+    login = os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
+    password = os.environ.get("NETYPAREO_PASSWORD") or resolve(cfg, "password")
     login = login or input("Login: ")
     password = password or getpass.getpass("Password: ")
     return login, password
@@ -213,33 +274,48 @@ def print_table(items):
 
 def main():
     global VERBOSE
-    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--all", action="store_true", help="sign every open sheet without asking")
     p.add_argument("--date", type=lambda s: dt.datetime.strptime(s, "%d/%m/%Y").date(),
                    default=dt.date.today(), help="day to list (DD/MM/YYYY, default today)")
-    p.add_argument("--signature", type=Path, default=here / "signature.png", help="PNG signature image")
-    p.add_argument("--config", type=Path, default=here / "config.toml", help="TOML file with login/password")
+    p.add_argument("--signature", type=Path, help="PNG signature image (default ./signature.png)")
+    p.add_argument("--config", type=Path, help="TOML config file (default: searched, see README)")
     p.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
     VERBOSE = args.verbose
 
+    try:
+        cfg, cfg_path = load_config(args.config)
+    except ConfigError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
+
+    signature = args.signature
+    if signature is None and cfg_path and cfg.get("signature"):
+        signature = Path(cfg["signature"]).expanduser()
+        if not signature.is_absolute():
+            signature = cfg_path.parent / signature
+    signature = signature or Path("signature.png")
+
     png = None
     if not args.dry_run:
         try:
-            png = args.signature.read_bytes()
+            png = signature.read_bytes()
         except OSError as e:
             sys.exit(f"Cannot read signature: {e}")
         if not png.startswith(PNG_MAGIC):
-            sys.exit(f"{args.signature} is not a PNG file")
+            sys.exit(f"{signature} is not a PNG file")
 
     session = requests.Session()
     session.headers["User-Agent"] = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
     )
     try:
-        login(session, *credentials(args.config))
+        login(session, *credentials(cfg))
+    except ConfigError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
     except AuthError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2

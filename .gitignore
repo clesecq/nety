@@ -1,4 +1,4 @@
 *.har
-config.toml
+auto-sign.toml
 signature.png
 __pycache__/
