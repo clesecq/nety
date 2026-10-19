@@ -39,6 +39,15 @@ Precedence: env vars `NETYPAREO_LOGIN` / `NETYPAREO_PASSWORD`, then the config f
 
 If you store a plain `password`, run `chmod 600` on the file. The script warns when others can read it.
 
+## Install
+
+```sh
+uv tool install .            # from a clone; installs the `netypareo-auto-sign-in` command
+uv tool install --reinstall . # after pulling changes
+```
+
+Then run `netypareo-auto-sign-in` with the same options as below. Without installing, use `uv run netypareo_auto_sign_in.py`.
+
 ## Usage
 
 ```sh

@@ -365,10 +365,14 @@ def main():
     return 1 if failed else 0
 
 
-if __name__ == "__main__":
+def run():
     try:
         sys.exit(main())
     except requests.RequestException as e:
         sys.exit(f"Network error: {e}")
     except KeyboardInterrupt:
         sys.exit(130)
+
+
+if __name__ == "__main__":
+    run()
