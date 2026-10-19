@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["requests"]
+# dependencies = ["requests", "tomlkit"]
 # ///
 """Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr."""
 
@@ -18,6 +18,7 @@ import tomllib
 from pathlib import Path
 
 import requests
+import tomlkit
 
 APP = "netypareo-auto-sign-in"
 BASE = "https://extranet.cfai-alsace.fr/netypareo/index.php"
@@ -25,6 +26,16 @@ HOME = f"{BASE}/apprenant/accueil"
 XHR = {"X-Requested-With": "XMLHttpRequest", "Referer": HOME}
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 SIGNED_ICON = "picto-green-e"
+KEYS = ("login", "login_command", "password", "password_command", "signature")
+TEMPLATE = f"""\
+# {APP} configuration
+# Each of login/password takes a plain value or a *_command whose first
+# output line is the value (string: run by the shell, list: no shell).
+
+# login = "040-xxxxx"
+# password_command = "pass show cfai/netypareo"
+# signature = "~/signature.png"
+"""
 
 VERBOSE = False
 
@@ -272,40 +283,30 @@ def print_table(items):
         print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
 
 
-def main():
-    global VERBOSE
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--all", action="store_true", help="sign every open sheet without asking")
-    p.add_argument("--date", type=lambda s: dt.datetime.strptime(s, "%d/%m/%Y").date(),
-                   default=dt.date.today(), help="day to list (DD/MM/YYYY, default today)")
-    p.add_argument("--signature", type=Path, help="PNG signature image (default ./signature.png)")
-    p.add_argument("--config", type=Path, help="TOML config file (default: searched, see README)")
-    p.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
-    p.add_argument("--verbose", action="store_true")
-    args = p.parse_args()
-    VERBOSE = args.verbose
+def signature_path(cli, cfg, cfg_path):
+    """--signature, else config `signature` (relative to the config file), else ./signature.png."""
+    if cli:
+        return cli
+    if cfg_path and cfg.get("signature"):
+        path = Path(cfg["signature"]).expanduser()
+        return path if path.is_absolute() else cfg_path.parent / path
+    return Path("signature.png")
 
+
+def read_png(path):
     try:
-        cfg, cfg_path = load_config(args.config)
-    except ConfigError as e:
-        print(f"Config error: {e}", file=sys.stderr)
-        return 2
+        png = path.read_bytes()
+    except OSError as e:
+        raise ConfigError(f"cannot read signature: {e}")
+    if not png.startswith(PNG_MAGIC):
+        raise ConfigError(f"{path} is not a PNG file")
+    return png
 
-    signature = args.signature
-    if signature is None and cfg_path and cfg.get("signature"):
-        signature = Path(cfg["signature"]).expanduser()
-        if not signature.is_absolute():
-            signature = cfg_path.parent / signature
-    signature = signature or Path("signature.png")
 
-    png = None
-    if not args.dry_run:
-        try:
-            png = signature.read_bytes()
-        except OSError as e:
-            sys.exit(f"Cannot read signature: {e}")
-        if not png.startswith(PNG_MAGIC):
-            sys.exit(f"{signature} is not a PNG file")
+def cmd_sign(args):
+    cfg, cfg_path = load_config(args.config)
+    signature = signature_path(args.signature, cfg, cfg_path)
+    png = None if args.dry_run else read_png(signature)
 
     session = requests.Session()
     session.headers["User-Agent"] = (
@@ -313,9 +314,6 @@ def main():
     )
     try:
         login(session, *credentials(cfg))
-    except ConfigError as e:
-        print(f"Config error: {e}", file=sys.stderr)
-        return 2
     except AuthError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
@@ -363,6 +361,265 @@ def main():
             continue
         print(f"Signed {label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
     return 1 if failed else 0
+
+
+def partner(key):
+    """The other form of a login/password key (`password` <-> `password_command`)."""
+    if key.endswith("_command"):
+        return key.removesuffix("_command")
+    return f"{key}_command" if key in ("login", "password") else None
+
+
+def config_problems(cfg):
+    problems = [f"unknown key '{k}'" for k in cfg if k not in KEYS]
+    problems += [f"both '{k}' and '{k}_command' are set"
+                 for k in ("login", "password") if k in cfg and f"{k}_command" in cfg]
+    return problems
+
+
+def default_config_path():
+    """Platform config file: XDG, macOS Application Support or %APPDATA%."""
+    paths = config_paths()
+    return paths[1] if len(paths) > 1 else paths[0]
+
+
+def target_config_path(explicit):
+    """File that settings commands read and write."""
+    if explicit:
+        return explicit
+    return next((p for p in config_paths() if p.is_file()), None) or default_config_path()
+
+
+def read_doc(path):
+    if not path.is_file():
+        return tomlkit.document()
+    try:
+        return tomlkit.parse(path.read_text(encoding="utf-8"))
+    except tomlkit.exceptions.TOMLKitError as e:
+        raise ConfigError(f"{path}: {e}")
+
+
+def write_doc(path, doc):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+    if os.name == "posix":
+        path.chmod(0o600)
+
+
+def cmd_settings_path(args):
+    path = target_config_path(args.config)
+    print(path if path.is_file() else f"{path} (not created yet)")
+    return 0
+
+
+def cmd_settings_show(args):
+    cfg, path = load_config(args.config)
+    print(f"Config file: {path or 'none'}")
+    if not args.config:
+        for p in config_paths():
+            print(f"  [{'found' if p.is_file() else 'missing'}] {p}")
+    for var in ("NETYPAREO_LOGIN", "NETYPAREO_PASSWORD"):
+        if os.environ.get(var):
+            print(f"Env {var} is set and overrides the config file.")
+    if cfg:
+        print("Settings:")
+        for key, value in cfg.items():
+            if key == "password":
+                value = "********"
+            elif isinstance(value, list):
+                value = json.dumps(value, ensure_ascii=False) + "  (no shell)"
+            print(f"  {key} = {value}")
+    problems = config_problems(cfg)
+    for problem in problems:
+        print(f"Problem: {problem}")
+    if not args.resolve:
+        return 2 if problems else 0
+
+    print("Resolved:")
+    failed = bool(problems)
+    for key in ("login", "password"):
+        try:
+            value = resolve(cfg, key)
+        except ConfigError as e:
+            print(f"  {key}: error: {e}")
+            failed = True
+            continue
+        if value is None:
+            value = "not set (prompted at runtime)"
+        elif key == "password":
+            value = "******** (ok)"
+        print(f"  {key}: {value}")
+    signature = signature_path(None, cfg, path)
+    try:
+        read_png(signature)
+        print(f"  signature: {signature} (ok)")
+    except ConfigError as e:
+        print(f"  signature: error: {e}")
+        failed = True
+    return 2 if failed else 0
+
+
+def cmd_settings_set(args):
+    key, values = args.key, args.value
+    if key == "password" and not values:
+        values = [getpass.getpass("Password: ")]
+    if not values or not values[0]:
+        raise ConfigError(f"no value given for '{key}'")
+    if len(values) > 1 and not key.endswith("_command"):
+        raise ConfigError(f"'{key}' takes one value (quote it)")
+    value = values[0] if len(values) == 1 else values
+    if key == "signature":
+        value = str(Path(values[0]).expanduser().resolve())
+
+    path = target_config_path(args.config)
+    doc = read_doc(path)
+    doc[key] = value
+    other = partner(key)
+    if other and other in doc:
+        del doc[other]
+        print(f"Removed '{other}' (replaced by '{key}').")
+    write_doc(path, doc)
+    print(f"Set '{key}' in {path}")
+    return 0
+
+
+def cmd_settings_unset(args):
+    path = target_config_path(args.config)
+    doc = read_doc(path)
+    if args.key not in doc:
+        print(f"'{args.key}' is not set in {path}")
+        return 0
+    del doc[args.key]
+    write_doc(path, doc)
+    print(f"Removed '{args.key}' from {path}")
+    return 0
+
+
+def cmd_settings_init(args):
+    path = target_config_path(args.config)
+    if path.exists() and input(f"{path} exists. Overwrite? [y/N] ").strip().lower() != "y":
+        print("Aborted.")
+        return 1
+
+    doc = tomlkit.document()
+    doc.add(tomlkit.comment(f"{APP} configuration (see `{APP} settings --help`)"))
+    login_value = input("Login: ").strip()
+    if login_value:
+        doc["login"] = login_value
+
+    while True:
+        choice = input("Password: (v)alue, (c)ommand, or (n)one = ask each time [n]: ").strip().lower()
+        if choice in ("", "n"):
+            break
+        if choice == "v":
+            password = getpass.getpass("Password: ")
+            if password:
+                doc["password"] = password
+                break
+        elif choice == "c":
+            command = input("Command printing the password (e.g. pass show cfai): ").strip()
+            if command:
+                doc["password_command"] = command
+                break
+
+    while True:
+        answer = input("Signature PNG path (empty to skip): ").strip()
+        if not answer:
+            break
+        signature = Path(answer).expanduser().resolve()
+        try:
+            read_png(signature)
+        except ConfigError as e:
+            print(e)
+            continue
+        doc["signature"] = str(signature)
+        break
+
+    write_doc(path, doc)
+    print(f"Wrote {path}")
+    if "password_command" in doc:
+        try:
+            resolve(doc.unwrap(), "password")
+            print("password_command: ok")
+        except ConfigError as e:
+            print(f"Warning: {e}", file=sys.stderr)
+    return 0
+
+
+def cmd_settings_edit(args):
+    path = target_config_path(args.config)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(TEMPLATE, encoding="utf-8")
+        if os.name == "posix":
+            path.chmod(0o600)
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
+        "notepad" if sys.platform == "win32" else "vi")
+    subprocess.run(f'{editor} "{path}"', shell=True)
+    try:
+        problems = config_problems(tomllib.loads(path.read_text(encoding="utf-8")))
+    except tomllib.TOMLDecodeError as e:
+        problems = [str(e)]
+    for problem in problems:
+        print(f"Problem in {path}: {problem}", file=sys.stderr)
+    return 2 if problems else 0
+
+
+def build_parser():
+    # SUPPRESS keeps a subcommand's unset option from overwriting the top-level one.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", type=Path, default=argparse.SUPPRESS,
+                        help="TOML config file (default: searched, see README)")
+    common.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS)
+
+    p = argparse.ArgumentParser(description=__doc__, parents=[common])
+    sub = p.add_subparsers(title="commands", metavar="<command>")
+
+    ps = sub.add_parser("sign", parents=[common], help="list attendance sheets and sign open ones")
+    ps.add_argument("--all", action="store_true", help="sign every open sheet without asking")
+    ps.add_argument("--date", type=lambda s: dt.datetime.strptime(s, "%d/%m/%Y").date(),
+                    default=dt.date.today(), help="day to list (DD/MM/YYYY, default today)")
+    ps.add_argument("--signature", type=Path, help="PNG signature image")
+    ps.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
+    ps.set_defaults(func=cmd_sign)
+
+    pc = sub.add_parser("settings", parents=[common], help="create, show or change the config file")
+    pc.set_defaults(func=lambda _args: pc.print_help() or 2)
+    actions = pc.add_subparsers(title="actions", metavar="<action>")
+    a = actions.add_parser("init", parents=[common], help="create the config file interactively")
+    a.set_defaults(func=cmd_settings_init)
+    a = actions.add_parser("show", parents=[common], help="show the config file and its settings")
+    a.add_argument("--resolve", action="store_true",
+                   help="run *_command entries and check the signature file")
+    a.set_defaults(func=cmd_settings_show)
+    a = actions.add_parser("set", parents=[common], help="set a key (password prompts if no value)")
+    a.add_argument("key", choices=KEYS)
+    a.add_argument("value", nargs="*", help="several values make a *_command list (no shell)")
+    a.set_defaults(func=cmd_settings_set)
+    a = actions.add_parser("unset", parents=[common], help="remove a key")
+    a.add_argument("key", choices=KEYS)
+    a.set_defaults(func=cmd_settings_unset)
+    a = actions.add_parser("path", parents=[common], help="print the config file path")
+    a.set_defaults(func=cmd_settings_path)
+    a = actions.add_parser("edit", parents=[common], help="open the config file in $VISUAL/$EDITOR")
+    a.set_defaults(func=cmd_settings_edit)
+    return p
+
+
+def main():
+    global VERBOSE
+    p = build_parser()
+    args = p.parse_args()
+    VERBOSE = getattr(args, "verbose", False)
+    args.config = getattr(args, "config", None)
+    if not hasattr(args, "func"):
+        p.print_help()
+        return 2
+    try:
+        return args.func(args)
+    except ConfigError as e:
+        print(f"Config error: {e}", file=sys.stderr)
+        return 2
 
 
 def run():

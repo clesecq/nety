@@ -5,8 +5,8 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 ## Setup
 
 1. Install [uv](https://docs.astral.sh/uv/).
-2. Put your signature image in `signature.png` (PNG, transparent background works best).
-3. Provide credentials (see [Configuration](#configuration)). Missing values are prompted for.
+2. [Install](#install) the command.
+3. Run `netypareo-auto-sign-in settings init`. It asks for your login, a password (value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
@@ -37,7 +37,27 @@ signature = "~/signature.png"
 
 Precedence: env vars `NETYPAREO_LOGIN` / `NETYPAREO_PASSWORD`, then the config file, then a prompt. `--signature` overrides the config `signature`, which overrides `./signature.png`.
 
-If you store a plain `password`, run `chmod 600` on the file. The script warns when others can read it.
+Files written by `settings` are `chmod 600`. If you store a plain `password` in a file you made yourself, `chmod 600` it. The script warns when others can read it.
+
+### Settings command
+
+`settings` reads and writes the file in use (`--config`, else the first file found, else the per-platform path). `set` and `unset` keep your comments and formatting.
+
+```sh
+netypareo-auto-sign-in settings init                  # interactive setup
+netypareo-auto-sign-in settings show                  # file in use, search paths, settings (password masked)
+netypareo-auto-sign-in settings show --resolve        # also run *_command entries and check the signature
+netypareo-auto-sign-in settings set login 040-xxxxx
+netypareo-auto-sign-in settings set password          # prompts, keeps it out of shell history
+netypareo-auto-sign-in settings set password_command "pass show cfai/netypareo"      # shell string
+netypareo-auto-sign-in settings set password_command secret-tool lookup service x    # list, no shell
+netypareo-auto-sign-in settings set signature ~/signature.png
+netypareo-auto-sign-in settings unset password
+netypareo-auto-sign-in settings path                  # print the config file path
+netypareo-auto-sign-in settings edit                  # open in $VISUAL / $EDITOR (notepad on Windows)
+```
+
+Setting `password` removes `password_command`, and the other way round (same for `login`).
 
 ## Install
 
@@ -46,20 +66,22 @@ uv tool install .            # from a clone; installs the `netypareo-auto-sign-i
 uv tool install --reinstall . # after pulling changes
 ```
 
-Then run `netypareo-auto-sign-in` with the same options as below. Without installing, use `uv run netypareo_auto_sign_in.py`.
+Without installing, replace `netypareo-auto-sign-in` with `uv run netypareo_auto_sign_in.py`.
 
 ## Usage
 
 ```sh
-uv run netypareo_auto_sign_in.py              # list today's unsigned sessions, pick which to sign
-uv run netypareo_auto_sign_in.py --all        # sign every open session without asking
-uv run netypareo_auto_sign_in.py --dry-run    # list and select, do not sign
-uv run netypareo_auto_sign_in.py --date 20/10/2026 --verbose
+netypareo-auto-sign-in sign              # list today's unsigned sessions, pick which to sign
+netypareo-auto-sign-in sign --all        # sign every open session without asking
+netypareo-auto-sign-in sign --dry-run    # list and select, do not sign
+netypareo-auto-sign-in sign --date 20/10/2026 --verbose
 ```
 
 At the prompt, enter `1,3`, `1-3`, or `a` for all open sessions. Press Enter with no input to cancel.
 
-Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` login failed.
+`--config PATH` and `--verbose` work with every command. Running without a command prints help.
+
+Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or login error.
 
 ## Security
 

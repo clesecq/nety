@@ -1,10 +1,10 @@
 [project]
 name = "netypareo-auto-sign-in"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["requests"]
+dependencies = ["requests", "tomlkit"]
 
 [project.scripts]
 netypareo-auto-sign-in = "netypareo_auto_sign_in:run"
