@@ -1,4 +1,4 @@
-# netypareo-auto-sign-in
+# nety
 
 Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
@@ -6,18 +6,18 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
 1. Install [uv](https://docs.astral.sh/uv/).
 2. [Install](#install) the command.
-3. Run `netypareo-auto-sign-in settings init`. It asks for your login, a password (value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
+3. Run `nety settings init`. It asks for your login, a password (value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
 The first config file found is used:
 
 1. `--config PATH`
-2. `./netypareo-auto-sign-in.toml` (current directory)
+2. `./nety.toml` (current directory)
 3. Per-platform:
-   - Linux: `$XDG_CONFIG_HOME/netypareo-auto-sign-in/config.toml` (default `~/.config/netypareo-auto-sign-in/config.toml`)
-   - macOS: `~/Library/Application Support/netypareo-auto-sign-in/config.toml`, then the Linux path
-   - Windows: `%APPDATA%\netypareo-auto-sign-in\config.toml`
+   - Linux: `$XDG_CONFIG_HOME/nety/config.toml` (default `~/.config/nety/config.toml`)
+   - macOS: `~/Library/Application Support/nety/config.toml`, then the Linux path
+   - Windows: `%APPDATA%\nety\config.toml`
 
 ```toml
 login = "040-xxxxx"
@@ -44,17 +44,17 @@ Files written by `settings` are `chmod 600`. If you store a plain `password` in 
 `settings` reads and writes the file in use (`--config`, else the first file found, else the per-platform path). `set` and `unset` keep your comments and formatting.
 
 ```sh
-netypareo-auto-sign-in settings init                  # interactive setup
-netypareo-auto-sign-in settings show                  # file in use, search paths, settings (password masked)
-netypareo-auto-sign-in settings show --resolve        # also run *_command entries and check the signature
-netypareo-auto-sign-in settings set login 040-xxxxx
-netypareo-auto-sign-in settings set password          # prompts, keeps it out of shell history
-netypareo-auto-sign-in settings set password_command "pass show cfai/netypareo"      # shell string
-netypareo-auto-sign-in settings set password_command secret-tool lookup service x    # list, no shell
-netypareo-auto-sign-in settings set signature ~/signature.png
-netypareo-auto-sign-in settings unset password
-netypareo-auto-sign-in settings path                  # print the config file path
-netypareo-auto-sign-in settings edit                  # open in $VISUAL / $EDITOR (notepad on Windows)
+nety settings init                  # interactive setup
+nety settings show                  # file in use, search paths, settings (password masked)
+nety settings show --resolve        # also run *_command entries and check the signature
+nety settings set login 040-xxxxx
+nety settings set password          # prompts, keeps it out of shell history
+nety settings set password_command "pass show cfai/netypareo"      # shell string
+nety settings set password_command secret-tool lookup service x    # list, no shell
+nety settings set signature ~/signature.png
+nety settings unset password
+nety settings path                  # print the config file path
+nety settings edit                  # open in $VISUAL / $EDITOR (notepad on Windows)
 ```
 
 Setting `password` removes `password_command`, and the other way round (same for `login`).
@@ -62,19 +62,19 @@ Setting `password` removes `password_command`, and the other way round (same for
 ## Install
 
 ```sh
-uv tool install .            # from a clone; installs the `netypareo-auto-sign-in` command
+uv tool install .            # from a clone; installs the `nety` command
 uv tool install --reinstall . # after pulling changes
 ```
 
-Without installing, replace `netypareo-auto-sign-in` with `uv run netypareo_auto_sign_in.py`.
+Without installing, replace `nety` with `uv run nety.py`.
 
 ## Usage
 
 ```sh
-netypareo-auto-sign-in sign              # list today's unsigned sessions, pick which to sign
-netypareo-auto-sign-in sign --all        # sign every open session without asking
-netypareo-auto-sign-in sign --dry-run    # list and select, do not sign
-netypareo-auto-sign-in sign --date 20/10/2026 --verbose
+nety sign              # list today's unsigned sessions, pick which to sign
+nety sign --all        # sign every open session without asking
+nety sign --dry-run    # list and select, do not sign
+nety sign --date 20/10/2026 --verbose
 ```
 
 At the prompt, enter `1,3`, `1-3`, or `a` for all open sessions. Press Enter with no input to cancel.

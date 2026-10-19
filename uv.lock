@@ -168,7 +168,7 @@ wheels = [
 ]
 
 [[package]]
-name = "netypareo-auto-sign-in"
+name = "nety"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

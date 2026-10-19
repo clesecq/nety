@@ -20,7 +20,7 @@ from pathlib import Path
 import requests
 import tomlkit
 
-APP = "netypareo-auto-sign-in"
+APP = "nety"
 BASE = "https://extranet.cfai-alsace.fr/netypareo/index.php"
 HOME = f"{BASE}/apprenant/accueil"
 XHR = {"X-Requested-With": "XMLHttpRequest", "Referer": HOME}

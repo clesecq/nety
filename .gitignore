@@ -1,5 +1,5 @@
 *.har
-netypareo-auto-sign-in.toml
+nety.toml
 signature.png
 __pycache__/
 .venv/
