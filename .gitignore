@@ -1,0 +1,4 @@
+*.har
+config.toml
+signature.png
+__pycache__/
