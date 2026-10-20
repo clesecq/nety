@@ -62,7 +62,16 @@ Setting `password` removes `password_command`, and the other way round (same for
 ## Install
 
 ```sh
-uv tool install .            # from a clone; installs the `nety` command
+uv tool install git+https://github.com/clesecq/nety.git # from GitHub; installs the `nety` command
+uv tool upgrade nety                                    # update to the latest commit
+```
+
+Append `@<tag|branch|commit>` to the URL to pin a version.
+
+From a clone:
+
+```sh
+uv tool install .            # installs the `nety` command
 uv tool install --reinstall . # after pulling changes
 ```
 
