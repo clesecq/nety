@@ -100,6 +100,12 @@ jobs:
       id-token: write # sign the provenance attestation
       attestations: write # store the attestation
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # History and tags, for the commits since the previous release.
+          fetch-depth: 0
+      - run: python3 .github/release_notes.py "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: assets
@@ -112,10 +118,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        # Re-runs replace the assets of a release created by an earlier attempt.
+        # Re-runs replace the assets and notes of a release created by an earlier attempt.
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" assets/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create "$GITHUB_REF_NAME" assets/* --generate-notes --verify-tag
+            gh release create "$GITHUB_REF_NAME" assets/* --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
           fi
