@@ -88,7 +88,7 @@ def changes(commits):
 
 def notes(tag):
     prev = previous_tag(tag)
-    log = git("log", "--format=%h %s", f"{prev}..{tag}" if prev else tag)
+    log = git("log", "--no-merges", "--format=%h %s", f"{prev}..{tag}" if prev else tag)
     commits = [line.split(" ", 1) for line in log.splitlines()]
     compare = (f"https://github.com/{REPO}/compare/{prev}...{tag}" if prev
                else f"https://github.com/{REPO}/commits/{tag}")
