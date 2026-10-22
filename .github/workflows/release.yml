@@ -72,9 +72,9 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: false
-      - run: uv sync --locked --group build
-      # keyring finds its backends through entry points, which need the metadata.
-      - run: uv run --locked pyinstaller --onefile --name nety --collect-all keyring --copy-metadata keyring src/nety/__main__.py
+      # No dev group: pytest would otherwise end up in the binary.
+      - run: uv sync --locked --no-dev --group build
+      - run: uv run --no-sync pyinstaller nety.spec
       # selfcheck loads Tcl/Tk, the platform keyring backend and Pillow in the frozen binary.
       - name: Smoke test
         run: |
