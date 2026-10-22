@@ -6,7 +6,7 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
 1. Install [uv](https://docs.astral.sh/uv/).
 2. [Install](#install) the command.
-3. Run `nety settings init`. It asks for your login, a password (value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
+3. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
@@ -35,7 +35,9 @@ signature = "~/signature.png"
 
 `login` and `password` each accept a `_command` variant (`login_command`, `password_command`). Set only one of the two forms.
 
-Precedence: env vars `NETYPAREO_LOGIN` / `NETYPAREO_PASSWORD`, then the config file, then a prompt. `--signature` overrides the config `signature`, which overrides `./signature.png`.
+Precedence: env vars `NETYPAREO_LOGIN` / `NETYPAREO_PASSWORD`, then the config file, then the system keyring (password only), then a prompt. `--signature` overrides the config `signature`, which overrides `./signature.png`.
+
+The password can live in the system keyring (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows) under service `nety`, one entry per login. After a successful login with a typed password, `nety sign` offers to save it there.
 
 Files written by `settings` are `chmod 600`. If you store a plain `password` in a file you made yourself, `chmod 600` it. The script warns when others can read it.
 
@@ -49,10 +51,12 @@ nety settings show                  # file in use, search paths, settings (passw
 nety settings show --resolve        # also run *_command entries and check the signature
 nety settings set login 040-xxxxx
 nety settings set password          # prompts, keeps it out of shell history
+nety settings set password --keyring  # prompts, stores it in the system keyring
 nety settings set password_command "pass show cfai/netypareo"      # shell string
 nety settings set password_command secret-tool lookup service x    # list, no shell
 nety settings set signature ~/signature.png
 nety settings unset password
+nety settings unset password --keyring
 nety settings path                  # print the config file path
 nety settings edit                  # open in $VISUAL / $EDITOR (notepad on Windows)
 ```

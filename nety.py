@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["questionary", "requests", "rich", "tomlkit"]
+# dependencies = ["keyring", "questionary", "requests", "rich", "tomlkit"]
 # ///
 """Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr."""
 
@@ -16,6 +16,9 @@ import time
 import tomllib
 from pathlib import Path
 
+import keyring
+import keyring.backends.fail
+import keyring.errors
 import questionary
 import requests
 import tomlkit
@@ -133,19 +136,57 @@ def resolve(cfg, key):
     return out
 
 
+def keyring_available():
+    return not isinstance(keyring.get_keyring(), keyring.backends.fail.Keyring)
+
+
+def keyring_get(user):
+    """Password stored for `user` in the system keyring, or None."""
+    try:
+        return keyring.get_password(APP, user)
+    except keyring.errors.KeyringError as e:
+        log(f"keyring: {e}")
+        return None
+
+
+def keyring_set(user, password):
+    try:
+        keyring.set_password(APP, user, password)
+    except keyring.errors.KeyringError as e:
+        raise ConfigError(f"keyring: {e}")
+
+
+def keyring_delete(user):
+    """Remove the stored password; False if there was none."""
+    try:
+        keyring.delete_password(APP, user)
+    except keyring.errors.PasswordDeleteError:
+        return False
+    except keyring.errors.KeyringError as e:
+        raise ConfigError(f"keyring: {e}")
+    return True
+
+
 def login_hint(cfg):
     """Configured login, without prompting."""
     return os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
 
 
 def credentials(cfg):
-    login = os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
-    password = os.environ.get("NETYPAREO_PASSWORD") or resolve(cfg, "password")
-    login = login or questionary.text(
+    """Return (login, password, source); source is env, config, keyring or prompt."""
+    login = login_hint(cfg) or questionary.text(
         "Login:", validate=lambda v: bool(v.strip()) or "Enter a login").unsafe_ask().strip()
-    password = password or questionary.password(
+    if os.environ.get("NETYPAREO_PASSWORD"):
+        return login, os.environ["NETYPAREO_PASSWORD"], "env"
+    password = resolve(cfg, "password")
+    if password:
+        return login, password, "config"
+    password = keyring_get(login)
+    if password:
+        return login, password, "keyring"
+    password = questionary.password(
         "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
-    return login, password
+    return login, password, "prompt"
 
 
 def login(session, user, pw):
@@ -357,15 +398,23 @@ def cmd_sign(args):
         done(f"Reused saved session for {user}")
     else:
         # Prompts, if any, must run outside the spinner.
-        user, password = credentials(cfg)
+        user, password, source = credentials(cfg)
         with CONSOLE.status(f"Logging in as {user}…"):
             try:
                 login(session, user, password)
             except AuthError as e:
                 print(f"Error: {e}", file=sys.stderr)
+                if source == "keyring":
+                    print(f"The keyring password was rejected: run "
+                          f"`{APP} settings set password --keyring` to replace it.",
+                          file=sys.stderr)
                 return 2
         save_session(session, user)
-        done(f"Logged in as {user}")
+        done(f"Logged in as {user}" + (" (password from keyring)" if source == "keyring" else ""))
+        if source == "prompt" and keyring_available() and questionary.confirm(
+                "Save the password in the system keyring?", default=True).unsafe_ask():
+            keyring_set(user, password)
+            done("Password saved in the system keyring")
 
     with CONSOLE.status(f"Loading schedule for {args.date:%d/%m/%Y}…") as status:
         seances = list_seances(session, args.date)
@@ -504,6 +553,7 @@ def cmd_settings_show(args):
 
     print("Resolved:")
     failed = bool(problems)
+    login_value = None
     for key in ("login", "password"):
         try:
             value = resolve(cfg, key)
@@ -511,10 +561,14 @@ def cmd_settings_show(args):
             print(f"  {key}: error: {e}")
             failed = True
             continue
-        if value is None:
-            value = "not set (prompted at runtime)"
-        elif key == "password":
+        if key == "login":
+            login_value = value
+        if key == "password" and value is not None:
             value = "******** (ok)"
+        elif key == "password" and login_value and keyring_get(login_value):
+            value = "******** (system keyring)"
+        elif value is None:
+            value = "not set (prompted at runtime)"
         print(f"  {key}: {value}")
     signature = signature_path(None, cfg, path)
     try:
@@ -526,7 +580,28 @@ def cmd_settings_show(args):
     return 2 if failed else 0
 
 
+def keyring_user(args):
+    """Login the keyring entry belongs to, from env or config."""
+    if args.key != "password":
+        raise ConfigError("--keyring only applies to 'password'")
+    user = login_hint(load_config(args.config)[0])
+    if not user:
+        raise ConfigError("set 'login' first: the keyring entry is stored per login")
+    return user
+
+
 def cmd_settings_set(args):
+    if args.keyring:
+        user = keyring_user(args)
+        if args.value:
+            raise ConfigError("--keyring prompts for the password: do not pass it as an argument")
+        keyring_set(user, questionary.password(
+            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask())
+        print(f"Saved the password for {user} in the system keyring.")
+        cfg = load_config(args.config)[0]
+        if "password" in cfg or "password_command" in cfg:
+            print("Note: 'password'/'password_command' in the config file take precedence.")
+        return 0
     key, values = args.key, args.value
     if key == "password" and not values:
         values = [questionary.password("Password:").unsafe_ask()]
@@ -551,6 +626,13 @@ def cmd_settings_set(args):
 
 
 def cmd_settings_unset(args):
+    if args.keyring:
+        user = keyring_user(args)
+        if keyring_delete(user):
+            print(f"Removed the password for {user} from the system keyring.")
+        else:
+            print(f"No password for {user} in the system keyring.")
+        return 0
     path = target_config_path(args.config)
     doc = read_doc(path)
     if args.key not in doc:
@@ -576,12 +658,20 @@ def cmd_settings_init(args):
     if login_value:
         doc["login"] = login_value
 
-    choice = questionary.select("Password:", choices=[
+    choices = [
         questionary.Choice("Ask each time", value="none"),
         questionary.Choice("Store the value", value="value"),
         questionary.Choice("Run a command that prints it", value="command"),
-    ]).unsafe_ask()
-    if choice == "value":
+    ]
+    # The keyring entry is keyed by login, so it needs one.
+    if login_value and keyring_available():
+        choices.insert(1, questionary.Choice("Store it in the system keyring", value="keyring"))
+    choice = questionary.select("Password:", choices=choices).unsafe_ask()
+    if choice == "keyring":
+        keyring_set(login_value, questionary.password(
+            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask())
+        print(f"Saved the password for {login_value} in the system keyring.")
+    elif choice == "value":
         doc["password"] = questionary.password(
             "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
     elif choice == "command":
@@ -661,10 +751,14 @@ def build_parser():
     a.set_defaults(func=cmd_settings_show)
     a = actions.add_parser("set", parents=[common], help="set a key (password prompts if no value)")
     a.add_argument("key", choices=KEYS)
+    a.add_argument("--keyring", action="store_true",
+                   help="store the password in the system keyring instead of the file")
     a.add_argument("value", nargs="*", help="several values make a *_command list (no shell)")
     a.set_defaults(func=cmd_settings_set)
     a = actions.add_parser("unset", parents=[common], help="remove a key")
     a.add_argument("key", choices=KEYS)
+    a.add_argument("--keyring", action="store_true",
+                   help="remove the password from the system keyring instead of the file")
     a.set_defaults(func=cmd_settings_unset)
     a = actions.add_parser("path", parents=[common], help="print the config file path")
     a.set_defaults(func=cmd_settings_path)
