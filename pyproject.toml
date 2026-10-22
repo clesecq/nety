@@ -27,6 +27,9 @@ path = "src/nety/__init__.py"
 packages = ["src/nety"]
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6",
+]
 dev = [
     "pytest>=9.1.1",
     "requests-mock>=1.12.1",

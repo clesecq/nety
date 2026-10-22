@@ -4,9 +4,8 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
 ## Setup
 
-1. Install [uv](https://docs.astral.sh/uv/).
-2. [Install](#install) the command.
-3. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
+1. [Install](#install) the command: a prebuilt binary, or with [uv](https://docs.astral.sh/uv/).
+2. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
@@ -76,6 +75,19 @@ The window needs a display and tkinter. The uv-managed Python that `uv tool inst
 
 ## Install
 
+### Prebuilt binary
+
+Download the file for your platform from the [Releases](https://github.com/clesecq/nety/releases) page (`nety-linux-x86_64`, `nety-linux-arm64`, `nety-macos-arm64`, `nety-windows-x86_64.exe`). `SHA256SUMS` lists their checksums. No Python or uv needed.
+
+```sh
+chmod +x nety-linux-x86_64
+mv nety-linux-x86_64 ~/.local/bin/nety
+```
+
+The macOS binary is not signed. Remove the quarantine flag before the first run: `xattr -d com.apple.quarantine nety`.
+
+### With uv
+
 ```sh
 uv tool install git+https://github.com/clesecq/nety.git # from GitHub; installs the `nety` command
 uv tool upgrade nety                                    # update to the latest commit
@@ -121,5 +133,7 @@ Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secr
 uv run pytest        # tests use recorded responses in tests/fixtures, no network
 uv run nety --help
 ```
+
+To release, bump `__version__` in `src/nety/__init__.py`, commit, then `git tag vX.Y.Z && git push origin main --tags`. The `Release` workflow runs the tests, builds the binaries with PyInstaller and publishes them. Run it by hand (`workflow_dispatch`) to build without publishing.
 
 Fixtures come from a real session with names, ids and tokens replaced. Never commit a raw `.har` file.

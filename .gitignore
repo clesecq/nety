@@ -4,3 +4,5 @@ signature.png
 __pycache__/
 .venv/
 dist/
+build/
+*.spec

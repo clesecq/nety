@@ -1,3 +1,3 @@
-from .cli import run
+from nety.cli import run
 
 run()
