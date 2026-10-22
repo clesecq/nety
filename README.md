@@ -77,7 +77,7 @@ The window needs a display and tkinter. The uv-managed Python that `uv tool inst
 
 ### Prebuilt binary
 
-Download the file for your platform from the [Releases](https://github.com/clesecq/nety/releases) page (`nety-linux-x86_64`, `nety-linux-arm64`, `nety-macos-arm64`, `nety-windows-x86_64.exe`). `SHA256SUMS` lists their checksums. No Python or uv needed.
+Download the file for your platform from the [Releases](https://github.com/clesecq/nety/releases) page (`nety-linux-x86_64`, `nety-linux-arm64`, `nety-macos-arm64`, `nety-windows-x86_64.exe`). No Python or uv needed. Check a download with `sha256sum -c SHA256SUMS --ignore-missing`, or check that CI built it with `gh attestation verify nety-linux-x86_64 --repo clesecq/nety`.
 
 ```sh
 chmod +x nety-linux-x86_64
