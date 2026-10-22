@@ -150,6 +150,47 @@ def test_menu_settings_show_then_back(monkeypatch, answers, tmp_path, capsys):
     assert 'login = 040-1' in capsys.readouterr().out
 
 
+def test_menu_leaves_menu_argv_untouched(monkeypatch, answers, tmp_path):
+    monkeypatch.setattr(cli, "cmd_sign", lambda args: 0)
+    answers.queue.append("Sign attendance sheets")
+    menu_main(monkeypatch, True, "--config", str(tmp_path / "c.toml"), "--verbose")
+    assert cli.MAIN_MENU[0][1] == ["sign"]
+
+
+def test_menu_set_value_starting_with_dash(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "login", "-abc"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"login": "-abc"}
+
+
+def test_menu_set_command_is_split(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "password_command", "pass -x show"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"password_command": ["pass", "-x", "show"]}
+
+
+def test_menu_pauses_after_network_error(monkeypatch, answers, capsys):
+    def boom(args):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(cli, "cmd_sign", boom)
+    pauses.clear()
+    answers.queue.append("Sign attendance sheets")
+    assert menu_main(monkeypatch, True) == 1
+    assert "Network error: down" in capsys.readouterr().err
+    assert pauses == ["Press Enter to exit…"]
+
+
+def test_menu_pauses_after_argument_error(monkeypatch, answers):
+    monkeypatch.setattr(cli, "MAIN_MENU", [("Bad", ["sign", "--nope"])])
+    pauses.clear()
+    answers.queue.append("Bad")
+    assert menu_main(monkeypatch, True) == 2
+    assert pauses == ["Press Enter to exit…"]
+
+
 def test_menu_settings_set_value(monkeypatch, answers, tmp_path):
     path = tmp_path / "c.toml"
     answers.queue += ["Settings", 3, "login", "040-9"]

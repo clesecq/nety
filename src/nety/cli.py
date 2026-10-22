@@ -608,7 +608,8 @@ def ask_set(unset=False):
         return argv + ["--keyring"]
     if not unset and key != "password":
         value = questionary.text(f"{key}:").unsafe_ask().strip()
-        argv += shlex.split(value) if key.endswith("_command") else [value]
+        # "--": a value may start with a dash.
+        argv += ["--", *(shlex.split(value) if key.endswith("_command") else [value])]
     return argv
 
 
@@ -667,6 +668,9 @@ def dispatch(args):
     except SessionExpired as e:
         print(f"Error: the session expired ({e}). Run the command again.", file=sys.stderr)
         return 2
+    except requests.RequestException as e:
+        print(f"Network error: {e}", file=sys.stderr)
+        return 1
 
 
 def main():
@@ -683,15 +687,17 @@ def main():
         argv = menu_argv()
         if not argv:
             return 0
-        # Carry the top-level options into the chosen command.
-        if args.config:
-            argv += ["--config", str(args.config)]
-        if getattr(args, "verbose", False):
-            argv.append("--verbose")
-        args = p.parse_args(argv)
-        args.config = getattr(args, "config", None)
+        # Carry the top-level options into the chosen command. They go first: the command
+        # may end with values that start with a dash. A new list: argv belongs to the menu.
+        options = (["--config", str(args.config)] if args.config else []) + (
+            ["--verbose"] if getattr(args, "verbose", False) else [])
         # Keep the output readable when the terminal closes with the process.
-        code = dispatch(args)
+        try:
+            args = p.parse_args([*options, *argv])
+            args.config = getattr(args, "config", None)
+            code = dispatch(args)
+        except SystemExit as e:
+            code = e.code
         try:
             input("Press Enter to exit…")
         except EOFError:
