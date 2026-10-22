@@ -15,111 +15,114 @@ import requests
 import tomlkit
 
 from . import __doc__ as DESCRIPTION
-from .client import (AuthError, find_open_seance, get_signature_form, list_seances, login,
-                     restore_session, save_session, submit_signature)
+from .client import AuthError, Lesson, Netypareo
 from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
 from .paths import APP, config_paths
 from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
                       login_hint)
-from .ui import CONSOLE, done, print_table, select
+from .files import write_private
+from .ui import CONSOLE, ask_password, done, print_lessons, select_lessons
 
 log = logging.getLogger(__name__).debug
 
 
-def cmd_sign(args):
-    cfg, cfg_path = load_config(args.config)
-    signature = signature_path(args.signature, cfg, cfg_path)
-    png = None if args.dry_run else read_png(signature)
-
-    session = requests.Session()
-    session.headers["User-Agent"] = (
-        "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
-    )
+def authenticate(client, cfg):
+    """Reuse the cached session or log in. Returns the login."""
     with CONSOLE.status("Checking saved session…"):
-        user = restore_session(session, login_hint(cfg))
+        user = client.restore_cookies(login_hint(cfg))
     if user:
         done(f"Reused saved session for {user}")
-    else:
-        # Prompts, if any, must run outside the spinner.
-        user, password, source = credentials(cfg)
-        with CONSOLE.status(f"Logging in as {user}…"):
-            try:
-                login(session, user, password)
-            except AuthError as e:
-                print(f"Error: {e}", file=sys.stderr)
-                if source == "keyring":
-                    print(f"The keyring password was rejected: run "
-                          f"`{APP} settings set password --keyring` to replace it.",
-                          file=sys.stderr)
-                return 2
-        save_session(session, user)
-        done(f"Logged in as {user}" + (" (password from keyring)" if source == "keyring" else ""))
-        if source == "prompt" and keyring_available() and questionary.confirm(
-                "Save the password in the system keyring?", default=True).unsafe_ask():
-            keyring_set(user, password)
-            done("Password saved in the system keyring")
+        return user
+    # Prompts, if any, must run outside the spinner.
+    user, password, source = credentials(cfg)
+    with CONSOLE.status(f"Logging in as {user}…"):
+        try:
+            client.login(user, password)
+        except AuthError as e:
+            if source == "keyring":
+                e.hint = (f"The keyring password was rejected: run "
+                          f"`{APP} settings set password --keyring` to replace it.")
+            raise
+    client.save_cookies(user)
+    done(f"Logged in as {user}" + (" (password from keyring)" if source == "keyring" else ""))
+    if source == "prompt" and keyring_available() and questionary.confirm(
+            "Save the password in the system keyring?", default=True).unsafe_ask():
+        keyring_set(user, password)
+        done("Password saved in the system keyring")
+    return user
 
-    with CONSOLE.status(f"Loading schedule for {args.date:%d/%m/%Y}…") as status:
-        seances = list_seances(session, args.date)
-        items = [s for s in seances if not s["signed"]]
-        done(f"Schedule {args.date:%d/%m/%Y}: {len(seances)} session(s), "
-             f"{len(seances) - len(items)} already signed")
+
+def unsigned_lessons(client, date):
+    """The day's unsigned lessons, with the one open for signing flagged."""
+    with CONSOLE.status(f"Loading schedule for {date:%d/%m/%Y}…") as status:
+        lessons = client.lessons(date)
+        unsigned = [lesson for lesson in lessons if not lesson.signed]
+        done(f"Schedule {date:%d/%m/%Y}: {len(lessons)} session(s), "
+             f"{len(lessons) - len(unsigned)} already signed")
 
         status.update("Checking for an open attendance sheet…")
-        open_code = find_open_seance(session)
+        # The signature modal answers for any lesson: only emargement-ouvert tells which is open.
+        open_code = client.open_lesson_code()
         log(f"emargement-ouvert codeSeance={open_code}")
-        if open_code and all(s["code"] != open_code for s in items):
-            items.append({"code": open_code, "course": "?", "time": "?", "start": 0,
-                          "teacher": "", "room": "", "signed": False})
-        opened = next((s for s in items if s["code"] == open_code), None)
-        done(f"Open attendance sheet: {opened['time']} {opened['course']}" if opened
-             else "Open attendance sheet: none")
+        opened = next((lesson for lesson in unsigned if lesson.code == open_code), None)
+        if open_code and not opened:
+            opened = Lesson(open_code)
+            unsigned.append(opened)
+        if opened:
+            opened.is_open = True
+        done(f"Open attendance sheet: {opened.label}" if opened else "Open attendance sheet: none")
+    return unsigned
 
-    # The signature modal answers for any session: only emargement-ouvert tells which is open.
-    for s in items:
-        s["status"] = "open" if s["code"] == open_code else "not open"
 
-    if not items:
+def sign_lessons(client, lessons, png, dry_run):
+    """Sign each lesson; return True if any signature failed."""
+    failed = False
+    with CONSOLE.status("Signing…") as status:
+        for lesson in lessons:
+            if dry_run:
+                print(f"[dry-run] would sign {lesson.label} (codeSeance={lesson.code})")
+                continue
+            # The CSRF token belongs to one modal opening: fetch a fresh one per signature.
+            status.update(f"{lesson.label}: opening signature form…")
+            form = client.signature_form(lesson.code)
+            if not form:
+                print(f"FAILED {lesson.label}: no longer open", file=sys.stderr)
+                failed = True
+                continue
+            status.update(f"{lesson.label}: sending signature…")
+            try:
+                ts = client.submit_signature(form[0], lesson.code, form[1], png)
+            except (requests.RequestException, RuntimeError) as e:
+                print(f"FAILED {lesson.label}: {e}", file=sys.stderr)
+                failed = True
+                continue
+            print(f"Signed {lesson.label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
+    return failed
+
+
+def cmd_sign(args):
+    cfg, cfg_path = load_config(args.config)
+    png = None if args.dry_run else read_png(signature_path(args.signature, cfg, cfg_path))
+
+    client = Netypareo()
+    user = authenticate(client, cfg)
+    lessons = unsigned_lessons(client, args.date)
+    if not lessons:
         print(f"Nothing left to sign on {args.date:%d/%m/%Y}.")
         return 0
-    print_table(items, args.date)
-    if not any(s["status"] == "open" for s in items):
+    print_lessons(lessons, args.date)
+    if not any(lesson.is_open for lesson in lessons):
         print("No open attendance sheet.")
         return 0
 
-    if args.all:
-        chosen = [s for s in items if s["status"] == "open"]
-    else:
-        chosen = select(items)
+    chosen = [lesson for lesson in lessons if lesson.is_open] if args.all else select_lessons(lessons)
     if not chosen:
         print("Nothing selected.")
         return 0
-
-    failed = False
-    with CONSOLE.status("Signing…") as status:
-        for s in chosen:
-            label = f"{s['time']} {s['course']}"
-            if args.dry_run:
-                print(f"[dry-run] would sign {label} (codeSeance={s['code']})")
-                continue
-            # The CSRF token belongs to one modal opening: fetch a fresh one per signature.
-            status.update(f"{label}: opening signature form…")
-            form = get_signature_form(session, s["code"])
-            if not form:
-                print(f"FAILED {label}: no longer open", file=sys.stderr)
-                failed = True
-                continue
-            status.update(f"{label}: sending signature…")
-            try:
-                ts = submit_signature(session, form[0], s["code"], form[1], png)
-            except (requests.RequestException, RuntimeError) as e:
-                print(f"FAILED {label}: {e}", file=sys.stderr)
-                failed = True
-                continue
-            print(f"Signed {label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
+    failed = sign_lessons(client, chosen, png, args.dry_run)
     # The server may have refreshed the cookies while we worked.
-    save_session(session, user)
+    client.save_cookies(user)
     return 1 if failed else 0
 
 
@@ -196,8 +199,7 @@ def cmd_settings_set(args):
         user = keyring_user(args)
         if args.value:
             raise ConfigError("--keyring prompts for the password: do not pass it as an argument")
-        keyring_set(user, questionary.password(
-            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask())
+        keyring_set(user, ask_password())
         print(f"Saved the password for {user} in the system keyring.")
         cfg = load_config(args.config)[0]
         if "password" in cfg or "password_command" in cfg:
@@ -205,7 +207,7 @@ def cmd_settings_set(args):
         return 0
     key, values = args.key, args.value
     if key == "password" and not values:
-        values = [questionary.password("Password:").unsafe_ask()]
+        values = [ask_password()]
     if not values or not values[0]:
         raise ConfigError(f"no value given for '{key}'")
     if len(values) > 1 and not key.endswith("_command"):
@@ -269,12 +271,10 @@ def cmd_settings_init(args):
         choices.insert(1, questionary.Choice("Store it in the system keyring", value="keyring"))
     choice = questionary.select("Password:", choices=choices).unsafe_ask()
     if choice == "keyring":
-        keyring_set(login_value, questionary.password(
-            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask())
+        keyring_set(login_value, ask_password())
         print(f"Saved the password for {login_value} in the system keyring.")
     elif choice == "value":
-        doc["password"] = questionary.password(
-            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
+        doc["password"] = ask_password()
     elif choice == "command":
         doc["password_command"] = questionary.text(
             "Command printing the password:", instruction="(e.g. pass show cfai)",
@@ -307,10 +307,7 @@ def cmd_settings_init(args):
 def cmd_settings_edit(args):
     path = target_config_path(args.config)
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(TEMPLATE, encoding="utf-8")
-        if os.name == "posix":
-            path.chmod(0o600)
+        write_private(path, TEMPLATE)
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
         "notepad" if sys.platform == "win32" else "vi")
     subprocess.run(f'{editor} "{path}"', shell=True)
@@ -382,6 +379,11 @@ def main():
         return args.func(args)
     except ConfigError as e:
         print(f"Config error: {e}", file=sys.stderr)
+        return 2
+    except AuthError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        if e.hint:
+            print(e.hint, file=sys.stderr)
         return 2
 
 

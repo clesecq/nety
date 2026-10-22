@@ -4,6 +4,7 @@ import keyring
 import keyring.backend
 import keyring.errors
 import pytest
+import questionary
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -53,10 +54,10 @@ def memory_keyring():
 class Answers:
     """Stand-in for questionary prompts: returns queued answers in order."""
 
-    def __init__(self, monkeypatch, module):
+    def __init__(self, monkeypatch):
         self.queue = []
         for name in ("text", "password", "confirm", "select", "path", "checkbox"):
-            monkeypatch.setattr(module.questionary, name, self._prompt)
+            monkeypatch.setattr(questionary, name, self._prompt)
 
     def _prompt(self, *args, **kwargs):
         answers = self

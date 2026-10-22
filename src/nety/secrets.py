@@ -6,10 +6,10 @@ import os
 import keyring
 import keyring.backends.fail
 import keyring.errors
-import questionary
 
 from .config import ConfigError, resolve
 from .paths import APP
+from .ui import ask_login, ask_password
 
 log = logging.getLogger(__name__).debug
 
@@ -51,17 +51,14 @@ def login_hint(cfg):
 
 
 def credentials(cfg):
-    """Return (login, password, source); source is env, config, keyring or prompt."""
-    login = login_hint(cfg) or questionary.text(
-        "Login:", validate=lambda v: bool(v.strip()) or "Enter a login").unsafe_ask().strip()
+    """Return (user, password, source); source is env, config, keyring or prompt."""
+    user = login_hint(cfg) or ask_login()
     if os.environ.get("NETYPAREO_PASSWORD"):
-        return login, os.environ["NETYPAREO_PASSWORD"], "env"
+        return user, os.environ["NETYPAREO_PASSWORD"], "env"
     password = resolve(cfg, "password")
     if password:
-        return login, password, "config"
-    password = keyring_get(login)
+        return user, password, "config"
+    password = keyring_get(user)
     if password:
-        return login, password, "keyring"
-    password = questionary.password(
-        "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
-    return login, password, "prompt"
+        return user, password, "keyring"
+    return user, ask_password(), "prompt"

@@ -7,33 +7,32 @@ from pathlib import Path
 APP = "nety"
 
 
+def _xdg(var, fallback):
+    return Path(os.environ.get(var) or Path.home() / fallback) / APP
+
+
+def user_dir(kind):
+    """Per-user `config` or `cache` directory: %APPDATA%/%LOCALAPPDATA%, macOS Library or XDG."""
+    config = kind == "config"
+    if sys.platform == "win32":
+        var, fallback = ("APPDATA", "Roaming") if config else ("LOCALAPPDATA", "Local")
+        return Path(os.environ.get(var) or Path.home() / "AppData" / fallback) / APP
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / ("Application Support" if config else "Caches") / APP
+    return _xdg("XDG_CONFIG_HOME", ".config") if config else _xdg("XDG_CACHE_HOME", ".cache")
+
+
+def default_config_path():
+    return user_dir("config") / "config.toml"
+
+
 def config_paths():
     """Candidate config files, in lookup order."""
-    paths = [Path.cwd() / f"{APP}.toml"]
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            paths.append(Path(appdata) / APP / "config.toml")
-        return paths
+    paths = [Path.cwd() / f"{APP}.toml", default_config_path()]
     if sys.platform == "darwin":
-        paths.append(Path.home() / "Library" / "Application Support" / APP / "config.toml")
-    xdg = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    paths.append(Path(xdg) / APP / "config.toml")
+        paths.append(_xdg("XDG_CONFIG_HOME", ".config") / "config.toml")
     return paths
 
 
 def cache_path():
-    """Session cookie cache: %LOCALAPPDATA%, macOS Caches or XDG cache."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Caches"
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / APP / "cookies.json"
-
-
-def default_config_path():
-    """Platform config file: XDG, macOS Application Support or %APPDATA%."""
-    paths = config_paths()
-    return paths[1] if len(paths) > 1 else paths[0]
+    return user_dir("cache") / "cookies.json"

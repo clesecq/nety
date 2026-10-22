@@ -6,7 +6,7 @@ from conftest import Answers
 
 @pytest.fixture
 def answers(monkeypatch):
-    return Answers(monkeypatch, secrets)
+    return Answers(monkeypatch)
 
 
 def test_env_wins(monkeypatch, memory_keyring, answers):

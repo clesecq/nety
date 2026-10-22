@@ -9,17 +9,14 @@ from pathlib import Path
 
 import tomlkit
 
+from .files import write_private
 from .paths import APP, config_paths, default_config_path
 
 log = logging.getLogger(__name__).debug
 
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-
-
 KEYS = ("login", "login_command", "password", "password_command", "signature")
-
-
 TEMPLATE = f"""\
 # {APP} configuration
 # Each of login/password takes a plain value or a *_command whose first
@@ -110,10 +107,7 @@ def read_doc(path):
 
 
 def write_doc(path, doc):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
-    if os.name == "posix":
-        path.chmod(0o600)
+    write_private(path, tomlkit.dumps(doc))
 
 
 def signature_path(cli, cfg, cfg_path):

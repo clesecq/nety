@@ -1,17 +1,19 @@
 import argparse
+import datetime as dt
+import re
 import tomllib
 
 import pytest
 
-from nety import cli, config
-from conftest import Answers
+from nety import cli, client, config
+from conftest import Answers, fixture
 
 PNG = b"\x89PNG\r\n\x1a\nxx"
 
 
 @pytest.fixture
 def answers(monkeypatch):
-    return Answers(monkeypatch, cli)
+    return Answers(monkeypatch)
 
 
 @pytest.fixture
@@ -99,3 +101,50 @@ def test_main_reports_config_error(monkeypatch, tmp_path, capsys):
                                      str(tmp_path / "missing.toml")])
     assert cli.main() == 2
     assert "Config error" in capsys.readouterr().err
+
+
+def mock_extranet(requests_mock):
+    requests_mock.get(client.BASE, text=fixture("login_page.html"))
+    requests_mock.post(f"{client.BASE}/authentication/", status_code=302,
+                       headers={"Location": "/netypareo/index.php/apprenant/accueil"})
+    requests_mock.get(client.HOME, text="home")
+    requests_mock.get(re.compile(r".*/planning/jour/ajax/"), text=fixture("planning_day.json"))
+    requests_mock.post(re.compile(r".*/has-emargement/"), json={"hasEmargement": True})
+    requests_mock.get(re.compile(r".*/emargement-ouvert/"), text=fixture("emargement_ouvert.html"))
+    requests_mock.get(re.compile(r".*/modal/signature/"), text=fixture("signature_modal.html"))
+    return requests_mock.post(re.compile(r".*/enregistrer-signature/"),
+                              text=fixture("submit_ok.json"))
+
+
+def sign_args(cfg_file, sig, **kw):
+    base = dict(config=cfg_file, signature=sig, date=dt.date(2026, 10, 19), all=True,
+                dry_run=False)
+    return argparse.Namespace(**{**base, **kw})
+
+
+def test_sign_all(cfg_file, tmp_path, requests_mock, capsys):
+    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
+    sig = tmp_path / "sig.png"
+    sig.write_bytes(PNG)
+    submit = mock_extranet(requests_mock)
+    assert cli.cmd_sign(sign_args(cfg_file, sig)) == 0
+    out = capsys.readouterr().out
+    assert "Signed 14h00-18h00 Informatique et Bureautique" in out
+    assert "08h30-12h30" not in out  # already signed, not listed
+    assert submit.call_count == 1 and "codeSeance=4819992" in submit.last_request.text
+
+
+def test_sign_dry_run_does_not_submit(cfg_file, requests_mock, capsys):
+    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
+    submit = mock_extranet(requests_mock)
+    assert cli.cmd_sign(sign_args(cfg_file, None, dry_run=True)) == 0
+    assert "[dry-run] would sign 14h00-18h00" in capsys.readouterr().out
+    assert not submit.called
+
+
+def test_sign_nothing_open(cfg_file, requests_mock, capsys):
+    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
+    mock_extranet(requests_mock)
+    requests_mock.post(re.compile(r".*/has-emargement/"), json={"hasEmargement": False})
+    assert cli.cmd_sign(sign_args(cfg_file, None, dry_run=True)) == 0
+    assert "No open attendance sheet." in capsys.readouterr().out
