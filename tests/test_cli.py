@@ -107,7 +107,11 @@ def test_main_reports_config_error(monkeypatch, tmp_path, capsys):
     assert "Config error" in capsys.readouterr().err
 
 
+pauses = []
+
+
 def menu_main(monkeypatch, tty, *argv):
+    monkeypatch.setattr("builtins.input", lambda prompt="": pauses.append(prompt) or "")
     monkeypatch.setattr("sys.argv", ["nety", *argv])
     monkeypatch.setattr("sys.stdin.isatty", lambda: tty)
     monkeypatch.setattr("sys.stdout.isatty", lambda: tty)
@@ -120,17 +124,21 @@ def test_no_command_without_tty_prints_help(monkeypatch, capsys):
 
 
 def test_menu_quit(monkeypatch, answers):
+    pauses.clear()
     answers.queue.append("Quit")
     assert menu_main(monkeypatch, True) == 0
+    assert pauses == []
 
 
 def test_menu_runs_sign_with_config(monkeypatch, answers, tmp_path):
+    pauses.clear()
     seen = []
     monkeypatch.setattr(cli, "cmd_sign", lambda args: seen.append(args) or 0)
     answers.queue.append("Sign attendance sheets")
     assert menu_main(monkeypatch, True, "--config", str(tmp_path / "c.toml")) == 0
     assert seen[0].config == tmp_path / "c.toml"
     assert seen[0].all is False
+    assert pauses == ["Press Enter to exit…"]
 
 
 def test_menu_settings_show_then_back(monkeypatch, answers, tmp_path, capsys):

@@ -690,6 +690,13 @@ def main():
             argv.append("--verbose")
         args = p.parse_args(argv)
         args.config = getattr(args, "config", None)
+        # Keep the output readable when the terminal closes with the process.
+        code = dispatch(args)
+        try:
+            input("Press Enter to exit…")
+        except EOFError:
+            pass
+        return code
     return dispatch(args)
 
 
