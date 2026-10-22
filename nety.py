@@ -468,7 +468,7 @@ def cmd_settings_show(args):
 def cmd_settings_set(args):
     key, values = args.key, args.value
     if key == "password" and not values:
-        values = [getpass.getpass("Password: ")]
+        values = [questionary.password("Password:").unsafe_ask()]
     if not values or not values[0]:
         raise ConfigError(f"no value given for '{key}'")
     if len(values) > 1 and not key.endswith("_command"):
@@ -503,43 +503,43 @@ def cmd_settings_unset(args):
 
 def cmd_settings_init(args):
     path = target_config_path(args.config)
-    if path.exists() and input(f"{path} exists. Overwrite? [y/N] ").strip().lower() != "y":
+    # unsafe_ask() lets Ctrl-C propagate, so run() exits with 130.
+    if path.exists() and not questionary.confirm(
+            f"{path} exists. Overwrite?", default=False).unsafe_ask():
         print("Aborted.")
         return 1
 
     doc = tomlkit.document()
     doc.add(tomlkit.comment(f"{APP} configuration (see `{APP} settings --help`)"))
-    login_value = input("Login: ").strip()
+    login_value = questionary.text("Login:").unsafe_ask().strip()
     if login_value:
         doc["login"] = login_value
 
-    while True:
-        choice = input("Password: (v)alue, (c)ommand, or (n)one = ask each time [n]: ").strip().lower()
-        if choice in ("", "n"):
-            break
-        if choice == "v":
-            password = getpass.getpass("Password: ")
-            if password:
-                doc["password"] = password
-                break
-        elif choice == "c":
-            command = input("Command printing the password (e.g. pass show cfai): ").strip()
-            if command:
-                doc["password_command"] = command
-                break
+    choice = questionary.select("Password:", choices=[
+        questionary.Choice("Ask each time", value="none"),
+        questionary.Choice("Store the value", value="value"),
+        questionary.Choice("Run a command that prints it", value="command"),
+    ]).unsafe_ask()
+    if choice == "value":
+        doc["password"] = questionary.password(
+            "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
+    elif choice == "command":
+        doc["password_command"] = questionary.text(
+            "Command printing the password:", instruction="(e.g. pass show cfai)",
+            validate=lambda v: bool(v.strip()) or "Enter a command").unsafe_ask().strip()
 
-    while True:
-        answer = input("Signature PNG path (empty to skip): ").strip()
-        if not answer:
-            break
-        signature = Path(answer).expanduser().resolve()
+    def check_png(answer):
+        if not answer.strip():
+            return True
         try:
-            read_png(signature)
+            read_png(Path(answer.strip()).expanduser())
         except ConfigError as e:
-            print(e)
-            continue
-        doc["signature"] = str(signature)
-        break
+            return str(e)
+        return True
+
+    answer = questionary.path("Signature PNG (empty to skip):", validate=check_png).unsafe_ask()
+    if answer.strip():
+        doc["signature"] = str(Path(answer.strip()).expanduser().resolve())
 
     write_doc(path, doc)
     print(f"Wrote {path}")
