@@ -2,6 +2,7 @@ from pathlib import Path
 
 import keyring
 import keyring.backend
+import keyring.backends.fail
 import keyring.errors
 import pytest
 import questionary
@@ -39,7 +40,17 @@ def isolated(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    # macOS and Windows ignore XDG: their dirs hang off the home dir or %APPDATA%.
+    for var in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(var, str(tmp_path / "home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     monkeypatch.chdir(tmp_path)
+    # A test that wants a keyring asks for memory_keyring; the others see none.
+    previous = keyring.get_keyring()
+    keyring.set_keyring(keyring.backends.fail.Keyring())
+    yield
+    keyring.set_keyring(previous)
 
 
 @pytest.fixture

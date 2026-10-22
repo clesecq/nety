@@ -30,13 +30,14 @@ log = logging.getLogger(__name__).debug
 
 def authenticate(client, cfg):
     """Reuse the cached session or log in. Returns the login."""
+    hint = login_hint(cfg)
     with CONSOLE.status("Checking saved session…"):
-        user = client.restore_cookies(login_hint(cfg))
+        user = client.restore_cookies(hint)
     if user:
         done(f"Reused saved session for {user}")
         return user
     # Prompts, if any, must run outside the spinner.
-    user, password, source = credentials(cfg)
+    user, password, source = credentials(cfg, hint)
     with CONSOLE.status(f"Logging in as {user}…"):
         try:
             client.login(user, password)
@@ -66,13 +67,18 @@ def unsigned_lessons(client, date):
         # The signature modal answers for any lesson: only emargement-ouvert tells which is open.
         open_code = client.open_lesson_code()
         log(f"emargement-ouvert codeSeance={open_code}")
-        opened = next((lesson for lesson in unsigned if lesson.code == open_code), None)
+        # A lesson may be listed twice (one entry per resource): flag every copy.
+        opened = [lesson for lesson in lessons if lesson.code == open_code]
         if open_code and not opened:
-            opened = Lesson(open_code)
-            unsigned.append(opened)
-        if opened:
-            opened.is_open = True
-        done(f"Open attendance sheet: {opened.label}" if opened else "Open attendance sheet: none")
+            opened = [Lesson(open_code)]
+            unsigned.append(opened[0])
+        for lesson in opened:
+            lesson.is_open = True
+        if opened and all(lesson.signed for lesson in opened):
+            done(f"Open attendance sheet: {opened[0].label} (already signed)")
+        else:
+            done(f"Open attendance sheet: {opened[0].label}" if opened
+                 else "Open attendance sheet: none")
     return unsigned
 
 
@@ -158,7 +164,8 @@ def cmd_settings_show(args):
 
     print("Resolved:")
     failed = bool(problems)
-    login_value = None
+    # Same precedence as sign: the env login picks the keyring entry, even if login_command fails.
+    login_value = os.environ.get("NETYPAREO_LOGIN")
     for key in ("login", "password"):
         try:
             value = resolve(cfg, key)
@@ -167,8 +174,7 @@ def cmd_settings_show(args):
             failed = True
             continue
         if key == "login":
-            # Same precedence as sign: the env login picks the keyring entry.
-            login_value = os.environ.get("NETYPAREO_LOGIN") or value
+            login_value = login_value or value
         if key == "password" and value is not None:
             value = "******** (ok)"
         elif key == "password" and login_value and keyring_get(login_value):
@@ -187,23 +193,27 @@ def cmd_settings_show(args):
 
 
 def keyring_user(args):
-    """Login the keyring entry belongs to, from env or config."""
+    """(login, config): the login the keyring entry belongs to, from env or config."""
     if args.key != "password":
         raise ConfigError("--keyring only applies to 'password'")
-    user = login_hint(load_config(args.config)[0])
+    if not keyring_available():
+        raise ConfigError("no system keyring available")
+    cfg = load_config(args.config)[0]
+    user = login_hint(cfg)
     if not user:
         raise ConfigError("set 'login' first: the keyring entry is stored per login")
-    return user
+    return user, cfg
 
 
 def cmd_settings_set(args):
     if args.keyring:
-        user = keyring_user(args)
         if args.value:
             raise ConfigError("--keyring prompts for the password: do not pass it as an argument")
+        user, cfg = keyring_user(args)
         keyring_set(user, ask_password())
         print(f"Saved the password for {user} in the system keyring.")
-        cfg = load_config(args.config)[0]
+        if os.environ.get("NETYPAREO_PASSWORD"):
+            print("Note: env NETYPAREO_PASSWORD is set and takes precedence.")
         if "password" in cfg or "password_command" in cfg:
             print("Note: 'password'/'password_command' in the config file take precedence.")
         return 0
@@ -232,7 +242,7 @@ def cmd_settings_set(args):
 
 def cmd_settings_unset(args):
     if args.keyring:
-        user = keyring_user(args)
+        user = keyring_user(args)[0]
         if keyring_delete(user):
             print(f"Removed the password for {user} from the system keyring.")
         else:
@@ -313,7 +323,17 @@ def cmd_settings_edit(args):
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
         "notepad" if sys.platform == "win32" else "vi")
     # No shell: the path may contain quotes or spaces. The editor may carry flags ("code -w").
-    subprocess.run(shlex.split(editor, posix=os.name == "posix") + [str(path)])
+    command = shlex.split(editor, posix=os.name == "posix")
+    if os.name != "posix":
+        # Non-POSIX shlex keeps the quotes around "C:\Program Files\...\editor.exe".
+        command = [arg[1:-1] if len(arg) > 1 and arg[0] == arg[-1] == '"' else arg
+                   for arg in command]
+    if not command:
+        raise ConfigError("$VISUAL/$EDITOR is empty")
+    try:
+        subprocess.run(command + [str(path)])
+    except OSError as e:
+        raise ConfigError(f"cannot run editor {command[0]!r}: {e}")
     try:
         problems = config_problems(tomllib.loads(path.read_text(encoding="utf-8")))
     except tomllib.TOMLDecodeError as e:

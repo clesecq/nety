@@ -50,9 +50,11 @@ def login_hint(cfg):
     return os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
 
 
-def credentials(cfg):
-    """Return (user, password, source); source is env, config, keyring or prompt."""
-    user = login_hint(cfg) or ask_login()
+def credentials(cfg, user=None):
+    """Return (user, password, source); source is env, config, keyring or prompt.
+
+    `user` is a login already resolved with login_hint, so login_command runs once."""
+    user = user or login_hint(cfg) or ask_login()
     if os.environ.get("NETYPAREO_PASSWORD"):
         return user, os.environ["NETYPAREO_PASSWORD"], "env"
     password = resolve(cfg, "password")

@@ -190,3 +190,42 @@ def test_edit_passes_path_without_shell(tmp_path, monkeypatch):
     assert cli.cmd_settings_edit(argparse.Namespace(config=target)) == 0
     assert log.read_text() == str(target)
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+class FakeClient:
+    def __init__(self, lessons, open_code):
+        self._lessons, self._open_code = lessons, open_code
+
+    def lessons(self, date):
+        return self._lessons
+
+    def open_lesson_code(self):
+        return self._open_code
+
+
+def test_open_lesson_already_signed_is_not_listed():
+    lessons = [Lesson(1, signed=True), Lesson(2)]
+    assert cli.unsigned_lessons(FakeClient(lessons, 1), dt.date(2026, 10, 19)) == [Lesson(2)]
+
+
+def test_open_lesson_listed_twice_flags_both():
+    lessons = [Lesson(1), Lesson(1)]
+    unsigned = cli.unsigned_lessons(FakeClient(lessons, 1), dt.date(2026, 10, 19))
+    assert [lesson.is_open for lesson in unsigned] == [True, True]
+
+
+def test_edit_missing_editor(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISUAL", "no-such-editor-xyz")
+    with pytest.raises(config.ConfigError, match="cannot run editor"):
+        cli.cmd_settings_edit(argparse.Namespace(config=tmp_path / "c.toml"))
+
+
+def test_edit_blank_editor(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISUAL", "   ")
+    with pytest.raises(config.ConfigError, match="empty"):
+        cli.cmd_settings_edit(argparse.Namespace(config=tmp_path / "c.toml"))
+
+
+def test_keyring_set_without_backend_does_not_prompt(cfg_file, answers):
+    with pytest.raises(config.ConfigError, match="no system keyring"):
+        cli.cmd_settings_set(ns(cfg_file, key="password", value=[], keyring=True))
