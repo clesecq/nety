@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -166,7 +167,8 @@ def cmd_settings_show(args):
             failed = True
             continue
         if key == "login":
-            login_value = value
+            # Same precedence as sign: the env login picks the keyring entry.
+            login_value = os.environ.get("NETYPAREO_LOGIN") or value
         if key == "password" and value is not None:
             value = "******** (ok)"
         elif key == "password" and login_value and keyring_get(login_value):
@@ -310,7 +312,8 @@ def cmd_settings_edit(args):
         write_private(path, TEMPLATE)
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
         "notepad" if sys.platform == "win32" else "vi")
-    subprocess.run(f'{editor} "{path}"', shell=True)
+    # No shell: the path may contain quotes or spaces. The editor may carry flags ("code -w").
+    subprocess.run(shlex.split(editor, posix=os.name == "posix") + [str(path)])
     try:
         problems = config_problems(tomllib.loads(path.read_text(encoding="utf-8")))
     except tomllib.TOMLDecodeError as e:

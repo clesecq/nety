@@ -35,7 +35,7 @@ def select_lessons(lessons):
                            checked=len(open_lessons) == 1)
         for lesson in open_lessons
     ]
-    return questionary.checkbox("Sign which?", choices=choices).ask() or []
+    return questionary.checkbox("Sign which?", choices=choices).unsafe_ask() or []
 
 
 def print_lessons(lessons, date):

@@ -1,11 +1,14 @@
 import argparse
 import datetime as dt
 import re
+import sys
 import tomllib
 
 import pytest
+import questionary
 
-from nety import cli, client, config
+from nety import cli, client, config, ui
+from nety.client import Lesson
 from conftest import Answers, fixture
 
 PNG = b"\x89PNG\r\n\x1a\nxx"
@@ -148,3 +151,42 @@ def test_sign_nothing_open(cfg_file, requests_mock, capsys):
     requests_mock.post(re.compile(r".*/has-emargement/"), json={"hasEmargement": False})
     assert cli.cmd_sign(sign_args(cfg_file, None, dry_run=True)) == 0
     assert "No open attendance sheet." in capsys.readouterr().out
+
+
+def test_select_ctrl_c_propagates(answers):
+    answers.queue.append(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        ui.select_lessons([Lesson(1, is_open=True)])
+
+
+def test_show_uses_env_login_for_keyring(cfg_file, memory_keyring, monkeypatch, capsys):
+    cfg_file.write_text("")
+    monkeypatch.setenv("NETYPAREO_LOGIN", "env-user")
+    memory_keyring.set_password("nety", "env-user", "kr")
+    cli.cmd_settings_show(argparse.Namespace(config=cfg_file, resolve=True))
+    assert "password: ******** (system keyring)" in capsys.readouterr().out
+
+
+def test_set_password_prompt_rejects_empty(cfg_file, monkeypatch):
+    seen = {}
+
+    def password(message, validate=None, **kw):
+        seen["validate"] = validate
+        raise KeyboardInterrupt
+    monkeypatch.setattr(questionary, "password", password)
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_settings_set(ns(cfg_file, key="password", value=[], keyring=False))
+    assert seen["validate"]("") == "Enter a password"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX editor script")
+def test_edit_passes_path_without_shell(tmp_path, monkeypatch):
+    log = tmp_path / "args.txt"
+    editor = tmp_path / "ed.sh"
+    editor.write_text(f'#!/bin/sh\nprintf "%s" "$1" > "{log}"\n')
+    editor.chmod(0o755)
+    target = tmp_path / 'my "odd" dir' / "config.toml"
+    monkeypatch.setenv("VISUAL", str(editor))
+    assert cli.cmd_settings_edit(argparse.Namespace(config=target)) == 0
+    assert log.read_text() == str(target)
+    assert target.stat().st_mode & 0o777 == 0o600
