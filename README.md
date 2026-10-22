@@ -79,12 +79,14 @@ The window needs a display and tkinter. The uv-managed Python that `uv tool inst
 
 Download the file for your platform from the [Releases](https://github.com/clesecq/nety/releases) page (`nety-linux-x86_64`, `nety-linux-arm64`, `nety-macos-arm64`, `nety-windows-x86_64.exe`). No Python or uv needed. Check a download with `sha256sum -c SHA256SUMS --ignore-missing`, or check that CI built it with `gh attestation verify nety-linux-x86_64 --repo clesecq/nety`.
 
+On Linux and macOS, make it executable and put it on your `PATH` (replace the file name with yours):
+
 ```sh
 chmod +x nety-linux-x86_64
 mv nety-linux-x86_64 ~/.local/bin/nety
 ```
 
-The macOS binary is not signed. Remove the quarantine flag before the first run: `xattr -d com.apple.quarantine nety`.
+The macOS binary is not signed. Remove the quarantine flag before the first run: `xattr -d com.apple.quarantine nety-macos-arm64` (before renaming it).
 
 ### With uv
 
@@ -127,13 +129,13 @@ HAR files hold your password and session cookies in plain text. Do not share or 
 
 ## Development
 
-Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `draw.py` (signature window), `cli.py` (commands).
+Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `draw.py` (signature window), `selfcheck.py` (bundling checks CI runs on the release binaries), `cli.py` (commands).
 
 ```sh
 uv run pytest        # tests use recorded responses in tests/fixtures, no network
 uv run nety --help
 ```
 
-To release, bump `__version__` in `src/nety/__init__.py`, commit, then `git tag vX.Y.Z && git push origin main --tags`. The `Release` workflow runs the tests, builds the binaries with PyInstaller and publishes them. Run it by hand (`workflow_dispatch`) to build without publishing.
+To release, bump `__version__` in `src/nety/__init__.py`, commit, then `git tag vX.Y.Z && git push origin main --tags`. The tag must point to a commit on `main`. The `Release` workflow runs the tests, builds the binaries with PyInstaller and publishes them. Run it by hand (`workflow_dispatch`) to build without publishing.
 
 Fixtures come from a real session with names, ids and tokens replaced. Never commit a raw `.har` file.

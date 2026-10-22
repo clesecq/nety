@@ -21,6 +21,7 @@ from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, 
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
 from .draw import draw_signature
 from .paths import APP, config_paths
+from .selfcheck import selfcheck
 from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
                       login_hint)
 from .files import write_private
@@ -450,6 +451,10 @@ def build_parser():
     a.add_argument("--output", type=Path,
                    help="PNG to write (default: signature.png next to the config file)")
     a.set_defaults(func=cmd_signature_draw)
+
+    # No help: kept out of --help, CI runs it on the release binaries.
+    a = sub.add_parser("selfcheck")
+    a.set_defaults(func=lambda _args: 1 if selfcheck() else 0)
     return p
 
 

@@ -21,13 +21,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, to check the tag is on main.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: false
+          # Same version the binaries embed (setup-python in the build job).
+          python-version: "3.13"
       - run: uv run --locked pytest
       - name: Check tag matches __version__
         if: startsWith(github.ref, 'refs/tags/')
         run: test "${GITHUB_REF_NAME#v}" = "$(uv run --locked python -c 'import nety; print(nety.__version__)')"
+      - name: Check tag is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
   build:
     needs: test
@@ -41,7 +48,7 @@ jobs:
             asset: nety-linux-arm64
           - os: macos-14
             asset: nety-macos-arm64
-          - os: windows-latest
+          - os: windows-2022
             asset: nety-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -68,17 +75,12 @@ jobs:
       - run: uv sync --locked --group build
       # keyring finds its backends through entry points, which need the metadata.
       - run: uv run --locked pyinstaller --onefile --name nety --collect-all keyring --copy-metadata keyring src/nety/__main__.py
+      # selfcheck loads Tcl/Tk, the platform keyring backend and Pillow in the frozen binary.
       - name: Smoke test
         run: |
           dist/nety --help
           dist/nety settings path
-      # No display on Linux runners: Tk loads, then fails to open the window.
-      - name: Check Tk is bundled
-        if: runner.os == 'Linux'
-        run: |
-          out=$(dist/nety signature draw --output /tmp/x.png 2>&1 || true)
-          echo "$out"
-          grep -q "cannot open a window" <<<"$out"
+          dist/nety selfcheck
       - run: mv dist/nety* "dist/$ASSET"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -88,7 +90,8 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    # A manual run only builds, even when started on a tag.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -109,4 +112,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" assets/* --generate-notes --verify-tag
+        # Re-runs replace the assets of a release created by an earlier attempt.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" assets/* --generate-notes --verify-tag
+          fi
