@@ -5,11 +5,20 @@ on:
     paths: [".github/workflows/**", ".github/dependabot.yml"]
   pull_request:
     paths: [".github/workflows/**", ".github/dependabot.yml"]
+  workflow_dispatch:
+  # New audits and advisories land without any change to this repo.
+  schedule:
+    - cron: "17 5 * * 1"
 
 permissions: {}
 
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   zizmor:
+    name: zizmor
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
