@@ -107,6 +107,48 @@ def test_main_reports_config_error(monkeypatch, tmp_path, capsys):
     assert "Config error" in capsys.readouterr().err
 
 
+def menu_main(monkeypatch, tty, *argv):
+    monkeypatch.setattr("sys.argv", ["nety", *argv])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: tty)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: tty)
+    return cli.main()
+
+
+def test_no_command_without_tty_prints_help(monkeypatch, capsys):
+    assert menu_main(monkeypatch, False) == 2
+    assert "commands" in capsys.readouterr().out
+
+
+def test_menu_quit(monkeypatch, answers):
+    answers.queue.append("Quit")
+    assert menu_main(monkeypatch, True) == 0
+
+
+def test_menu_runs_sign_with_config(monkeypatch, answers, tmp_path):
+    seen = []
+    monkeypatch.setattr(cli, "cmd_sign", lambda args: seen.append(args) or 0)
+    answers.queue.append("Sign attendance sheets")
+    assert menu_main(monkeypatch, True, "--config", str(tmp_path / "c.toml")) == 0
+    assert seen[0].config == tmp_path / "c.toml"
+    assert seen[0].all is False
+
+
+def test_menu_settings_show_then_back(monkeypatch, answers, tmp_path, capsys):
+    path = tmp_path / "c.toml"
+    path.write_text('login = "040-1"\n')
+    # Back returns to the main menu; then Settings -> Show.
+    answers.queue += ["Settings", 7, "Settings", 1]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert 'login = 040-1' in capsys.readouterr().out
+
+
+def test_menu_settings_set_value(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "login", "040-9"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"login": "040-9"}
+
+
 def mock_extranet(requests_mock):
     requests_mock.get(client.BASE, text=fixture("login_page.html"))
     requests_mock.post(f"{client.BASE}/authentication/", status_code=302,

@@ -5,7 +5,7 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 ## Setup
 
 1. [Install](#install) the command: a prebuilt binary, or with [uv](https://docs.astral.sh/uv/).
-2. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
+2. Run `nety` with no command for a menu (on a terminal), or `nety settings init` directly. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
