@@ -7,7 +7,6 @@
 import argparse
 import base64
 import datetime as dt
-import getpass
 import json
 import os
 import re
@@ -142,8 +141,10 @@ def login_hint(cfg):
 def credentials(cfg):
     login = os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
     password = os.environ.get("NETYPAREO_PASSWORD") or resolve(cfg, "password")
-    login = login or input("Login: ")
-    password = password or getpass.getpass("Password: ")
+    login = login or questionary.text(
+        "Login:", validate=lambda v: bool(v.strip()) or "Enter a login").unsafe_ask().strip()
+    password = password or questionary.password(
+        "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
     return login, password
 
 
