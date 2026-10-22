@@ -94,4 +94,6 @@ Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or log
 
 ## Security
 
+After a login, `nety sign` keeps the session cookies in `~/.cache/nety/cookies.json` (`$XDG_CACHE_HOME`, `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows), mode `600`. Later runs reuse them and log in again only when they expire. Anyone who reads that file can act as you until the session ends: delete it to log out.
+
 HAR files hold your password and session cookies in plain text. Do not share or commit them. Delete `*.har` files once you no longer need them.

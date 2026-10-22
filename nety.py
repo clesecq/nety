@@ -79,6 +79,17 @@ def config_paths():
     return paths
 
 
+def cache_path():
+    """Session cookie cache: %LOCALAPPDATA%, macOS Caches or XDG cache."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return base / APP / "cookies.json"
+
+
 def load_config(explicit):
     """Return (config dict, path) of the first config file found, or ({}, None)."""
     if explicit:
@@ -123,6 +134,11 @@ def resolve(cfg, key):
     return out
 
 
+def login_hint(cfg):
+    """Configured login, without prompting."""
+    return os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
+
+
 def credentials(cfg):
     login = os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
     password = os.environ.get("NETYPAREO_PASSWORD") or resolve(cfg, "password")
@@ -160,6 +176,41 @@ def login(session, user, pw):
     if resp.status_code not in (302, 303) or "accueil" not in location:
         raise AuthError("login failed (check login/password)")
     session.get(HOME).raise_for_status()
+
+
+def save_session(session, user):
+    """Store the session cookies (they grant access: owner-only file)."""
+    path = cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cookies = [{"name": c.name, "value": c.value, "domain": c.domain, "path": c.path,
+                "secure": c.secure, "expires": c.expires} for c in session.cookies]
+    path.write_text(json.dumps({"login": user, "cookies": cookies}), encoding="utf-8")
+    if os.name == "posix":
+        path.chmod(0o600)
+    log(f"cookies saved: {path}")
+
+
+def restore_session(session, hint):
+    """Load cached cookies; return the login if the server still accepts them, else None."""
+    path = cache_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        user, cookies = data["login"], data["cookies"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if hint and hint != user:
+        log(f"cookie cache is for {user}, not {hint}")
+        return None
+    for c in cookies:
+        session.cookies.set(c["name"], c["value"], domain=c["domain"], path=c["path"],
+                            secure=c["secure"], expires=c["expires"])
+    # An expired session redirects or serves the login form instead of the home page.
+    resp = session.get(HOME, allow_redirects=False)
+    log(f"cached session: HTTP {resp.status_code}")
+    if resp.status_code == 200 and "btnSeConnecter" not in resp.text:
+        return user
+    session.cookies.clear()
+    return None
 
 
 def list_seances(session, date):
@@ -299,16 +350,23 @@ def cmd_sign(args):
     session.headers["User-Agent"] = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
     )
-    user, password = credentials(cfg)
-    with CONSOLE.status(f"Logging in as {user}…") as status:
-        try:
-            login(session, user, password)
-        except AuthError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 2
+    with CONSOLE.status("Checking saved session…"):
+        user = restore_session(session, login_hint(cfg))
+    if user:
+        done(f"Reused saved session for {user}")
+    else:
+        # Prompts, if any, must run outside the spinner.
+        user, password = credentials(cfg)
+        with CONSOLE.status(f"Logging in as {user}…"):
+            try:
+                login(session, user, password)
+            except AuthError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 2
+        save_session(session, user)
         done(f"Logged in as {user}")
 
-        status.update(f"Loading schedule for {args.date:%d/%m/%Y}…")
+    with CONSOLE.status(f"Loading schedule for {args.date:%d/%m/%Y}…") as status:
         seances = list_seances(session, args.date)
         items = [s for s in seances if not s["signed"]]
         done(f"Schedule {args.date:%d/%m/%Y}: {len(seances)} session(s), "
@@ -366,6 +424,8 @@ def cmd_sign(args):
                 failed = True
                 continue
             print(f"Signed {label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
+    # The server may have refreshed the cookies while we worked.
+    save_session(session, user)
     return 1 if failed else 0
 
 
