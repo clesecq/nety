@@ -3,6 +3,7 @@ import datetime as dt
 import re
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 import questionary
@@ -591,3 +592,13 @@ def test_watch_key_presses_are_rate_limited(watch_env, monkeypatch):
     assert watch_env(fake) == 0
     gaps = [(b - a).total_seconds() for a, b in zip(checks, checks[1:])]
     assert gaps and all(gap >= cli.MIN_GAP for gap in gaps)
+
+
+def test_version_matches_pyproject(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["nety", "--version"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    assert capsys.readouterr().out.split()[-1] == version

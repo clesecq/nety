@@ -2,6 +2,8 @@
 # PyInstaller's keyring hook bundles the backends and the entry-point metadata they need.
 import sys
 
+from PyInstaller.utils.hooks import copy_metadata
+
 EXCLUDES = [
     # Test and build tools, pulled in through keyring.testing and pkg_resources.
     "pytest", "_pytest", "setuptools", "pkg_resources",
@@ -13,7 +15,9 @@ EXCLUDES = [
     "pydoc_data",
 ]
 
-a = Analysis(["src/nety/__main__.py"], excludes=EXCLUDES)
+a = Analysis(["src/nety/__main__.py"], excludes=EXCLUDES,
+             # --version reads the version from the package metadata.
+             datas=copy_metadata("nety"))
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,

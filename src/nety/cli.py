@@ -16,7 +16,7 @@ import questionary
 import requests
 import tomlkit
 
-from . import __doc__ as DESCRIPTION
+from . import __doc__ as DESCRIPTION, __version__
 from .client import AuthError, Lesson, Netypareo, SessionExpired
 from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
@@ -538,6 +538,7 @@ def build_parser():
     common.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS)
 
     p = argparse.ArgumentParser(description=DESCRIPTION, parents=[common])
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(title="commands", metavar="<command>")
 
     ps = sub.add_parser("sign", parents=[common], help="list attendance sheets and sign open ones")
