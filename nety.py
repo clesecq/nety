@@ -198,7 +198,7 @@ def find_open_seance(session):
 
 
 def get_signature_form(session, code):
-    """Return (codeApprenant, antiCSRFToken), or None if the sheet is not open."""
+    """Return (codeApprenant, antiCSRFToken), or None if the modal has no form."""
     resp = session.get(
         f"{BASE}/emargement/modal/signature/{code}",
         params={"_": int(time.time() * 1000)},
@@ -325,8 +325,9 @@ def cmd_sign(args):
         items.append({"code": open_code, "course": "?", "time": "?", "start": 0,
                       "teacher": "", "room": "", "signed": False})
 
+    # The signature modal answers for any séance: only emargement-ouvert tells which is open.
     for s in items:
-        s["status"] = "open" if get_signature_form(session, s["code"]) else "not open"
+        s["status"] = "open" if s["code"] == open_code else "not open"
 
     if not items:
         print(f"Nothing left to sign on {args.date:%d/%m/%Y}.")
