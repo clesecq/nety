@@ -20,23 +20,27 @@ def test_window_starts_buffer_early():
 
 def test_pick_skips_signed_and_ended():
     signed = Lesson(1, start=MORNING.start, end=MORNING.end, signed=True)
-    assert pick_lesson([signed, AFTERNOON], at(9), 45) == AFTERNOON
-    assert pick_lesson([MORNING, AFTERNOON], at(13), 45) == AFTERNOON
+    assert pick_lesson([signed, AFTERNOON], at(9)) == AFTERNOON
+    assert pick_lesson([MORNING, AFTERNOON], at(13)) == AFTERNOON
 
 
 def test_pick_prefers_earliest_while_windows_overlap():
-    # 12h00: the morning lesson still runs and the afternoon window is open with a long buffer.
-    assert pick_lesson([AFTERNOON, MORNING], at(12), 150) == MORNING
+    # 12h00: the morning lesson still runs while the afternoon one is being watched for.
+    assert pick_lesson([AFTERNOON, MORNING], at(12)) == MORNING
+
+
+def test_pick_skips_lessons_without_times():
+    assert pick_lesson([Lesson(9), AFTERNOON], at(9)) == AFTERNOON
 
 
 def test_pick_dedupes_by_code():
     twin = Lesson(1, start=MORNING.start, end=MORNING.end)
-    assert pick_lesson([MORNING, twin], at(9), 45) == MORNING
+    assert pick_lesson([MORNING, twin], at(9)) == MORNING
 
 
 def test_pick_none_after_last_lesson():
-    assert pick_lesson([MORNING, AFTERNOON], at(18), 45) is None
-    assert pick_lesson([], at(9), 45) is None
+    assert pick_lesson([MORNING, AFTERNOON], at(18)) is None
+    assert pick_lesson([], at(9)) is None
 
 
 def test_wait_seconds_cut_at_deadline():

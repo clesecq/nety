@@ -16,6 +16,8 @@ def tty_stdin(monkeypatch):
     master, slave = pty.openpty()
     stdin = os.fdopen(slave, "r")
     monkeypatch.setattr(sys, "stdin", stdin)
+    # The pty is not this process's controlling terminal: count it as the foreground.
+    monkeypatch.setattr(os, "tcgetpgrp", lambda fd: os.getpgrp())
     yield master
     stdin.close()
     os.close(master)
@@ -42,5 +44,17 @@ def test_wait_key_without_terminal_sleeps(monkeypatch):
     slept = []
     monkeypatch.setattr(sys, "stdin", open(os.devnull))
     monkeypatch.setattr(ui.time, "sleep", slept.append)
+    assert ui.wait_key(3) is False
+    assert slept == [3]
+
+
+@unix
+def test_wait_key_in_background_job_just_sleeps(tty_stdin, monkeypatch):
+    # `nety watch &`: another process group owns the terminal.
+    monkeypatch.setattr(os, "tcgetpgrp", lambda fd: os.getpgrp() + 1)
+    slept = []
+    monkeypatch.setattr(ui.time, "sleep", slept.append)
+    os.write(tty_stdin, b"x")
+    assert not ui.keys_enabled()
     assert ui.wait_key(3) is False
     assert slept == [3]

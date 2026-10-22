@@ -131,3 +131,21 @@ def test_restore_without_cache(nety):
 def test_session_alive(nety, requests_mock, status, text, alive):
     requests_mock.get(client.HOME, status_code=status, text=text)
     assert nety.session_alive() is alive
+
+
+def test_expired_session_raises(nety, requests_mock):
+    # Without a session the extranet answers its XHR endpoints with a 404 HTML page.
+    requests_mock.post(re.compile(r".*/has-emargement/"), status_code=404, text="<html>")
+    requests_mock.get(re.compile(r".*/planning/jour/ajax/"), status_code=404, text="<html>")
+    with pytest.raises(client.SessionExpired):
+        nety.open_lesson_code()
+    with pytest.raises(client.SessionExpired):
+        nety.lessons(DAY)
+
+
+def test_login_and_restore_set_user(nety, requests_mock, tmp_path):
+    requests_mock.get(client.HOME, text="<html>accueil</html>")
+    paths.cache_path().parent.mkdir(parents=True, exist_ok=True)
+    paths.cache_path().write_text(json.dumps({"login": "040-1", "cookies": []}))
+    assert nety.restore_cookies(None) == "040-1"
+    assert nety.user == "040-1"

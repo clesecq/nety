@@ -10,15 +10,16 @@ def window(lesson, day, buffer):
             midnight + dt.timedelta(minutes=lesson.end))
 
 
-def pick_lesson(lessons, now, buffer):
+def pick_lesson(lessons, now):
     """The earliest unsigned lesson that has not ended, or None."""
+    timed = [lesson for lesson in lessons if lesson.start is not None and lesson.end is not None]
     seen = set()
-    for lesson in sorted(lessons, key=lambda lesson: lesson.start):
+    for lesson in sorted(timed, key=lambda lesson: lesson.start):
         # A lesson may be listed twice (one entry per resource).
-        if lesson.code in seen or lesson.signed or lesson.start is None or lesson.end is None:
+        if lesson.code in seen or lesson.signed:
             continue
         seen.add(lesson.code)
-        if window(lesson, now.date(), buffer)[1] > now:
+        if window(lesson, now.date(), 0)[1] > now:
             return lesson
     return None
 

@@ -27,6 +27,16 @@ class AuthError(Exception):
         self.hint = hint
 
 
+class SessionExpired(Exception):
+    """The server no longer accepts the session cookies: log in again."""
+
+
+def check_session(resp):
+    # Without a valid session the extranet answers its XHR endpoints with a 404 HTML page.
+    if resp.status_code == 404:
+        raise SessionExpired(f"HTTP 404 on {resp.request.method} {resp.url.split('?')[0]}")
+
+
 def hhmm(minutes):
     return f"{minutes // 60:02d}h{minutes % 60:02d}"
 
@@ -59,6 +69,8 @@ class Netypareo:
     def __init__(self):
         self.http = requests.Session()
         self.http.headers["User-Agent"] = USER_AGENT
+        # Login of the current session, set by login() and restore_cookies().
+        self.user = None
 
     def _xhr_get(self, path):
         # The browser adds a cache-busting timestamp to every XHR GET.
@@ -93,6 +105,7 @@ class Netypareo:
         if resp.status_code not in (302, 303) or "accueil" not in location:
             raise AuthError("login failed (check login/password)")
         self.http.get(HOME).raise_for_status()
+        self.user = user
 
     def save_cookies(self, user):
         """Store the session cookies (they grant access: owner-only file)."""
@@ -115,6 +128,7 @@ class Netypareo:
             self.http.cookies.set(c["name"], c["value"], domain=c["domain"], path=c["path"],
                                   secure=c["secure"], expires=c["expires"])
         if self.session_alive():
+            self.user = user
             return user
         self.http.cookies.clear()
         return None
@@ -128,6 +142,7 @@ class Netypareo:
 
     def lessons(self, date):
         resp = self._xhr_get(f"/planning/jour/ajax/{date:%d/%m/%Y}")
+        check_session(resp)
         resp.raise_for_status()
         lessons = []
         for semaine in resp.json().get("semaines", []):
@@ -151,6 +166,7 @@ class Netypareo:
         # Same order as the browser: the modal answers 500 when nothing is open.
         resp = self.http.post(f"{BASE}/emargement/ajax/has-emargement/", headers=XHR)
         log(f"has-emargement: HTTP {resp.status_code} {resp.text[:100]!r}")
+        check_session(resp)
         try:
             if resp.ok and not resp.json().get("hasEmargement"):
                 return None

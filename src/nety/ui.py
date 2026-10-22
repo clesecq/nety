@@ -55,9 +55,22 @@ def print_lessons(lessons, date):
     Console().print(table)
 
 
+def keys_enabled():
+    """True when wait_key can read keys: stdin is a terminal and nety runs in the foreground."""
+    if not sys.stdin.isatty():
+        return False
+    if os.name == "nt":
+        return True
+    # Changing the terminal from a background job (`nety watch &`) stops it with SIGTTOU.
+    try:
+        return os.tcgetpgrp(sys.stdin.fileno()) == os.getpgrp()
+    except OSError:
+        return False
+
+
 def wait_key(seconds):
     """Sleep up to `seconds`. Returns True early when a key is pressed in the terminal."""
-    if not sys.stdin.isatty():
+    if not keys_enabled():
         time.sleep(seconds)
         return False
     if os.name == "nt":

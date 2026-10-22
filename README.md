@@ -126,13 +126,13 @@ nety watch --interval 300  # check every 5 minutes
 nety watch --dry-run       # watch, but do not sign
 ```
 
-`watch` picks the earliest unsigned session of the day that has not ended. Sessions usually start about 30 minutes before the time the schedule lists, so it starts checking 45 minutes before (`--buffer`). Until then it sleeps. It checks every 120 seconds (`--interval`, at least 30) until the session ends, and signs as soon as the sheet opens. Press any key (Enter, Space…) to check right away, for example when the teacher announces the sheet; before the window opens, a key starts checking early. It logs in again if the session expires, and retries after network errors.
+`watch` picks the earliest unsigned session of the day that has not ended. Sessions usually start about 30 minutes before the time the schedule lists, so it starts checking 45 minutes before (`--buffer`). Until then it sleeps. It checks every 120 seconds (`--interval`, at least 30) until the session ends, and signs as soon as the sheet opens. Press any key (Enter, Space…) to check right away, for example when the teacher announces the sheet. Before the window opens, a key starts checking early. Checks are at least 10 seconds apart: a key pressed sooner shows a countdown to the next check. It logs in again if the session expires. Network errors (at startup too, for example when cron runs it before the network is up), failed logins and failed signatures are retried at the next check until the session ends. If you signed in the browser meanwhile, it notices and does not sign again.
 
-To run it unattended (cron, systemd timer, tmux), store the password in the keyring, `password_command` or `NETYPAREO_PASSWORD`. A re-login cannot prompt when no one is at the terminal.
+To run it unattended (cron, systemd timer, tmux, or `nety watch &`), store the password in the keyring, `password_command` or `NETYPAREO_PASSWORD`. A re-login cannot prompt when no one is at the terminal.
 
 `--config PATH` and `--verbose` work with every command. Running without a command prints help.
 
-Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or login error, `3` (`watch`) the session ended without an open sheet.
+Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or login error, `3` (`watch`) the session ended without an open sheet. For `watch`, `1` means the sheet opened but no signature went through before the session ended.
 
 ## Security
 
