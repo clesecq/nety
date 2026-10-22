@@ -20,7 +20,9 @@ from pathlib import Path
 import questionary
 import requests
 import tomlkit
+from rich import box
 from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 
 APP = "nety"
@@ -245,31 +247,27 @@ def submit_signature(session, code_apprenant, code_seance, token, png):
     return body["timeStampAjout"]
 
 
-def table_lines(items):
-    """Aligned rows (header first) built from the session data."""
-    rows = [("Time", "Course", "Teacher", "Room", "Status")]
-    rows += [(s["time"], s["course"], s["teacher"], s["room"], s["status"]) for s in items]
-    widths = [max(len(r[c]) for r in rows) for c in range(len(rows[0]))]
-    return ["  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip() for r in rows]
-
-
 def select(items):
     """Ask which open sheets to sign. Returns the chosen items."""
-    header, *lines = table_lines(items)
-    single = sum(s["status"] == "open" for s in items) == 1
+    open_items = [s for s in items if s["status"] == "open"]
     choices = [
-        questionary.Choice(line, value=s, checked=single)
-        if s["status"] == "open" else questionary.Choice(line, value=s, disabled=s["status"])
-        for line, s in zip(lines, items)
+        questionary.Choice(f"{s['time']}  {s['course']}", value=s, checked=len(open_items) == 1)
+        for s in open_items
     ]
-    answer = questionary.checkbox(
-        "Sign which?", choices=choices, instruction=f"\n    {header}"
-    ).ask()
-    return answer or []
+    return questionary.checkbox("Sign which?", choices=choices).ask() or []
 
 
-def print_table(items):
-    print("\n".join(table_lines(items)))
+def print_table(items, date):
+    table = Table(title=f"Sessions on {date:%d/%m/%Y}", box=box.ROUNDED, header_style="bold")
+    for column in ("Time", "Course", "Teacher", "Room", "Status"):
+        table.add_column(column, no_wrap=column in ("Time", "Status"))
+    for s in items:
+        is_open = s["status"] == "open"
+        # Text() keeps server strings such as "[bold]" from being read as markup.
+        table.add_row(*(Text(s[k]) for k in ("time", "course", "teacher", "room")),
+                      Text(s["status"], style="bold green" if is_open else "dim"),
+                      style=None if is_open else "dim")
+    Console().print(table)
 
 
 def signature_path(cli, cfg, cfg_path):
@@ -333,13 +331,12 @@ def cmd_sign(args):
     if not items:
         print(f"Nothing left to sign on {args.date:%d/%m/%Y}.")
         return 0
+    print_table(items, args.date)
     if not any(s["status"] == "open" for s in items):
-        print_table(items)
         print("No open attendance sheet.")
         return 0
 
     if args.all:
-        print_table(items)
         chosen = [s for s in items if s["status"] == "open"]
     else:
         chosen = select(items)
