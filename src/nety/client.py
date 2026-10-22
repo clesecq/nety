@@ -114,13 +114,17 @@ class Netypareo:
         for c in cookies:
             self.http.cookies.set(c["name"], c["value"], domain=c["domain"], path=c["path"],
                                   secure=c["secure"], expires=c["expires"])
-        # An expired session redirects or serves the login form instead of the home page.
-        resp = self.http.get(HOME, allow_redirects=False)
-        log(f"cached session: HTTP {resp.status_code}")
-        if resp.status_code == 200 and "btnSeConnecter" not in resp.text:
+        if self.session_alive():
             return user
         self.http.cookies.clear()
         return None
+
+    def session_alive(self):
+        """True while the server accepts the session cookies."""
+        # An expired session redirects or serves the login form instead of the home page.
+        resp = self.http.get(HOME, allow_redirects=False)
+        log(f"session check: HTTP {resp.status_code}")
+        return resp.status_code == 200 and "btnSeConnecter" not in resp.text
 
     def lessons(self, date):
         resp = self._xhr_get(f"/planning/jour/ajax/{date:%d/%m/%Y}")

@@ -121,3 +121,13 @@ def test_cookie_cache_rejected(nety, requests_mock, hint, status, text):
 
 def test_restore_without_cache(nety):
     assert nety.restore_cookies(None) is None
+
+
+@pytest.mark.parametrize("status, text, alive", [
+    (200, "<html>accueil</html>", True),
+    (302, "", False),
+    (200, '<input name="btnSeConnecter">', False),
+])
+def test_session_alive(nety, requests_mock, status, text, alive):
+    requests_mock.get(client.HOME, status_code=status, text=text)
+    assert nety.session_alive() is alive

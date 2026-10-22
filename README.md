@@ -117,9 +117,22 @@ nety sign --date 20/10/2026 --verbose
 
 A table lists the day's unsigned sessions. The prompt offers only open ones; a single open session is pre-checked. Use Space to toggle, Enter to confirm, Ctrl-C to cancel.
 
+### Watch
+
+```sh
+nety watch                 # wait for the current (or next) session's sheet, sign it, exit
+nety watch --buffer 60     # start watching 60 minutes before the listed start
+nety watch --interval 300  # check every 5 minutes
+nety watch --dry-run       # watch, but do not sign
+```
+
+`watch` picks the earliest unsigned session of the day that has not ended. Sessions usually start about 30 minutes before the time the schedule lists, so it starts checking 45 minutes before (`--buffer`). Until then it sleeps. It checks every 120 seconds (`--interval`, at least 30) until the session ends, and signs as soon as the sheet opens. It logs in again if the session expires, and retries after network errors.
+
+To run it unattended (cron, systemd timer, tmux), store the password in the keyring, `password_command` or `NETYPAREO_PASSWORD`. A re-login cannot prompt when no one is at the terminal.
+
 `--config PATH` and `--verbose` work with every command. Running without a command prints help.
 
-Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or login error.
+Exit codes: `0` OK or nothing to sign, `1` a signature failed, `2` config or login error, `3` (`watch`) the session ended without an open sheet.
 
 ## Security
 
@@ -129,7 +142,7 @@ HAR files hold your password and session cookies in plain text. Do not share or 
 
 ## Development
 
-Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `draw.py` (signature window), `selfcheck.py` (bundling checks CI runs on the release binaries), `cli.py` (commands).
+Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `watch.py` (which session `watch` waits for), `draw.py` (signature window), `selfcheck.py` (bundling checks CI runs on the release binaries), `cli.py` (commands).
 
 ```sh
 uv run pytest        # tests use recorded responses in tests/fixtures, no network

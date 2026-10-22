@@ -1,4 +1,4 @@
-"""Command line: sign, settings and signature commands."""
+"""Command line: sign, watch, settings and signature commands."""
 
 import argparse
 import datetime as dt
@@ -8,6 +8,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -26,8 +27,12 @@ from .secrets import (credentials, keyring_available, keyring_delete, keyring_ge
                       login_hint)
 from .files import write_private
 from .ui import CONSOLE, ask_password, done, print_lessons, select_lessons
+from .watch import pick_lesson, wait_seconds, window
 
 log = logging.getLogger(__name__).debug
+# Module-level so tests can run `watch` on a fake clock.
+now = dt.datetime.now
+sleep = time.sleep
 
 
 def authenticate(client, cfg):
@@ -174,6 +179,72 @@ def cmd_sign(args):
     # The server may have refreshed the cookies while we worked.
     client.save_cookies(user)
     return 1 if failed else 0
+
+
+def cmd_watch(args):
+    cfg, cfg_path = load_config(args.config)
+    png = None if args.dry_run else load_signature(args, cfg, cfg_path)
+
+    client = Netypareo()
+    user = authenticate(client, cfg)
+    today = now().date()
+    with CONSOLE.status(f"Loading schedule for {today:%d/%m/%Y}…"):
+        lessons = client.lessons(today)
+    lesson = pick_lesson(lessons, now(), args.buffer)
+    if not lesson:
+        print("Nothing left to watch today.")
+        return 0
+    start, end = window(lesson, today, args.buffer)
+    others = {other.code: other for other in lessons if not other.signed and other.code != lesson.code}
+
+    if now() < start:
+        print(f"Waiting until {start:%H:%M} for {lesson.label}")
+        with CONSOLE.status(f"Waiting until {start:%H:%M} for {lesson.label}…"):
+            while (t := now()) < start:
+                sleep(wait_seconds(t, start, args.interval))
+    done(f"Watching {lesson.label} until {end:%H:%M}, checking every {args.interval} s")
+
+    warned = set()
+    while True:
+        try:
+            # An expired session hides the open sheet instead of failing: check it first.
+            if not client.session_alive():
+                print("Session expired, logging in again.")
+                user = authenticate(client, cfg)
+            code = client.open_lesson_code()
+        except requests.RequestException as e:
+            print(f"Network error, retrying: {e}", file=sys.stderr)
+            code = None
+        log(f"emargement-ouvert codeSeance={code}")
+        if code == lesson.code:
+            done(f"Open attendance sheet: {lesson.label}")
+            failed = sign_lessons(client, [lesson], png, args.dry_run)
+            client.save_cookies(user)
+            return 1 if failed else 0
+        if code in others and code not in warned:
+            print(f"Open attendance sheet: {others[code].label}, not the one watched: "
+                  f"run `{APP} sign` to sign it.")
+            warned.add(code)
+
+        t = now()
+        if t >= end:
+            break
+        pause = wait_seconds(t, end, args.interval)
+        next_check = t + dt.timedelta(seconds=pause)
+        with CONSOLE.status(f"Waiting for the sheet of {lesson.label}, "
+                            f"next check {next_check:%H:%M:%S}…"):
+            sleep(pause)
+
+    print(f"{lesson.label} ended without an open attendance sheet.")
+    client.save_cookies(user)
+    return 3
+
+
+def interval(value):
+    seconds = int(value)
+    if seconds < 30:
+        raise argparse.ArgumentTypeError("at least 30 seconds")
+    return seconds
 
 
 def cmd_settings_path(args):
@@ -417,6 +488,16 @@ def build_parser():
     ps.add_argument("--signature", type=Path, help="PNG signature image")
     ps.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
     ps.set_defaults(func=cmd_sign)
+
+    pw = sub.add_parser("watch", parents=[common],
+                        help="wait for the current lesson's attendance sheet and sign it")
+    pw.add_argument("--buffer", type=int, default=45, metavar="MIN",
+                    help="start watching MIN minutes before the listed start (default 45)")
+    pw.add_argument("--interval", type=interval, default=120, metavar="SEC",
+                    help="seconds between checks, at least 30 (default 120)")
+    pw.add_argument("--signature", type=Path, help="PNG signature image")
+    pw.add_argument("--dry-run", action="store_true", help="watch, but do not sign")
+    pw.set_defaults(func=cmd_watch)
 
     pc = sub.add_parser("settings", parents=[common], help="create, show or change the config file")
     pc.set_defaults(func=lambda _args: pc.print_help() or 2)

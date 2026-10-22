@@ -6,6 +6,7 @@ import tomllib
 
 import pytest
 import questionary
+import requests
 
 from nety import cli, client, config, ui
 from nety.client import Lesson
@@ -294,3 +295,117 @@ def test_sign_missing_signature_without_tty(cfg_file, monkeypatch):
     with pytest.raises(config.ConfigError):
         cli.cmd_sign(sign_args(cfg_file, None))
     assert calls == []
+
+
+class WatchClient:
+    """Fake extranet for `watch`: `polls` lists what each open_lesson_code() call returns."""
+
+    def __init__(self, lessons, polls, alive=None):
+        self._lessons, self.polls = lessons, list(polls)
+        self.alive = list(alive or [])
+        self.submitted = []
+
+    def lessons(self, date):
+        return self._lessons
+
+    def session_alive(self):
+        return self.alive.pop(0) if self.alive else True
+
+    def open_lesson_code(self):
+        result = self.polls.pop(0) if self.polls else None
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def signature_form(self, code):
+        return 7, "token"
+
+    def submit_signature(self, code_apprenant, code, token, png):
+        self.submitted.append(code)
+        return 1_760_882_400
+
+    def save_cookies(self, user):
+        pass
+
+
+@pytest.fixture
+def watch_env(monkeypatch, cfg_file, tmp_path):
+    """Run cmd_watch on a fake clock (13h00 on 19/10/2026) against a WatchClient."""
+    clock = {"t": dt.datetime(2026, 10, 19, 13, 0)}
+
+    def sleep(seconds):
+        clock["t"] += dt.timedelta(seconds=seconds)
+
+    logins = []
+    monkeypatch.setattr(cli, "now", lambda: clock["t"])
+    monkeypatch.setattr(cli, "sleep", sleep)
+    monkeypatch.setattr(cli, "authenticate", lambda client, cfg: logins.append(1) or "040-1")
+    sig = tmp_path / "sig.png"
+    sig.write_bytes(PNG)
+
+    def run(fake, **kw):
+        monkeypatch.setattr(cli, "Netypareo", lambda: fake)
+        base = dict(config=cfg_file, signature=sig, buffer=45, interval=120, dry_run=False)
+        return cli.cmd_watch(argparse.Namespace(**{**base, **kw}))
+
+    run.clock, run.logins = clock, logins
+    return run
+
+
+WATCHED = Lesson(4819992, "Info", start=14 * 60, end=18 * 60)
+
+
+def test_watch_signs_when_sheet_opens(watch_env, capsys):
+    fake = WatchClient([WATCHED], [None, None, 4819992])
+    assert watch_env(fake) == 0
+    assert fake.submitted == [4819992]
+    # Polling starts at 13h15 (45 min early); the 3rd poll is 4 minutes later.
+    assert watch_env.clock["t"] == dt.datetime(2026, 10, 19, 13, 19)
+    out = capsys.readouterr().out
+    assert "Waiting until 13:15 for 14h00-18h00 Info" in out
+    assert "Signed 14h00-18h00 Info" in out
+
+
+def test_watch_lesson_ends_without_sheet(watch_env, capsys):
+    fake = WatchClient([WATCHED], [])
+    assert watch_env(fake) == 3
+    assert watch_env.clock["t"] == dt.datetime(2026, 10, 19, 18, 0)
+    assert "ended without an open attendance sheet" in capsys.readouterr().out
+
+
+def test_watch_logs_in_again_when_session_expires(watch_env):
+    fake = WatchClient([WATCHED], [None, 4819992], alive=[True, False])
+    assert watch_env(fake) == 0
+    assert len(watch_env.logins) == 2
+
+
+def test_watch_retries_after_network_error(watch_env, capsys):
+    fake = WatchClient([WATCHED], [requests.ConnectionError("down"), 4819992])
+    assert watch_env(fake) == 0
+    assert "Network error, retrying: down" in capsys.readouterr().err
+
+
+def test_watch_dry_run_does_not_submit(watch_env, capsys):
+    fake = WatchClient([WATCHED], [4819992])
+    assert watch_env(fake, dry_run=True, signature=None) == 0
+    assert not fake.submitted
+    assert "[dry-run] would sign 14h00-18h00 Info" in capsys.readouterr().out
+
+
+def test_watch_flags_other_open_sheet(watch_env, capsys):
+    other = Lesson(5, "Maths", start=16 * 60, end=17 * 60)
+    fake = WatchClient([WATCHED, other], [5, 5, 4819992])
+    assert watch_env(fake) == 0
+    out = capsys.readouterr().out
+    assert out.count("16h00-17h00 Maths, not the one watched") == 1
+
+
+def test_watch_nothing_left(watch_env, capsys):
+    done = Lesson(1, start=8 * 60, end=12 * 60)
+    assert watch_env(WatchClient([done], [])) == 0
+    assert "Nothing left to watch today." in capsys.readouterr().out
+
+
+def test_watch_interval_minimum():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["watch", "--interval", "10"])
