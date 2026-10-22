@@ -409,3 +409,13 @@ def test_watch_nothing_left(watch_env, capsys):
 def test_watch_interval_minimum():
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["watch", "--interval", "10"])
+
+
+def test_watch_key_starts_polling_early(watch_env, monkeypatch):
+    fake = WatchClient([WATCHED], [4819992])
+    real_sleep = cli.sleep
+    # The first wait (13h00, window opens 13h15) is cut short by a key press.
+    calls = []
+    monkeypatch.setattr(cli, "sleep", lambda s: calls.append(s) or real_sleep(1) or len(calls) == 1)
+    assert watch_env(fake) == 0
+    assert watch_env.clock["t"] == dt.datetime(2026, 10, 19, 13, 0, 1)

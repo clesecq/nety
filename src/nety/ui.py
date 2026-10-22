@@ -3,6 +3,10 @@
 Prompts use unsafe_ask(): Ctrl-C propagates, so run() exits with 130.
 """
 
+import os
+import sys
+import time
+
 import questionary
 from rich import box
 from rich.console import Console
@@ -49,3 +53,39 @@ def print_lessons(lessons, date):
                       Text(status, style="bold green" if lesson.is_open else "dim"),
                       style=None if lesson.is_open else "dim")
     Console().print(table)
+
+
+def wait_key(seconds):
+    """Sleep up to `seconds`. Returns True early when a key is pressed in the terminal."""
+    if not sys.stdin.isatty():
+        time.sleep(seconds)
+        return False
+    if os.name == "nt":
+        import msvcrt
+
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            if msvcrt.kbhit():
+                # Special keys send two characters: drain both.
+                while msvcrt.kbhit():
+                    msvcrt.getwch()
+                return True
+            time.sleep(0.1)
+        return False
+
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        # cbreak: any key counts, not only Enter, and it is not echoed. Ctrl-C still works.
+        # TCSANOW keeps a key pressed while nety was busy (the default flushes it).
+        tty.setcbreak(fd, termios.TCSANOW)
+        ready, _, _ = select.select([fd], [], [], seconds)
+        if ready:
+            os.read(fd, 1024)  # drop the key, escape sequences included
+        return bool(ready)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)

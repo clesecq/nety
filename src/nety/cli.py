@@ -8,7 +8,6 @@ import os
 import shlex
 import subprocess
 import sys
-import time
 import tomllib
 from pathlib import Path
 
@@ -26,13 +25,14 @@ from .selfcheck import selfcheck
 from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
                       login_hint)
 from .files import write_private
-from .ui import CONSOLE, ask_password, done, print_lessons, select_lessons
+from .ui import CONSOLE, ask_password, done, print_lessons, select_lessons, wait_key
 from .watch import pick_lesson, wait_seconds, window
 
 log = logging.getLogger(__name__).debug
 # Module-level so tests can run `watch` on a fake clock.
 now = dt.datetime.now
-sleep = time.sleep
+# Returns True when a key cut the wait short.
+sleep = wait_key
 
 
 def authenticate(client, cfg):
@@ -197,11 +197,13 @@ def cmd_watch(args):
     start, end = window(lesson, today, args.buffer)
     others = {other.code: other for other in lessons if not other.signed and other.code != lesson.code}
 
+    key = ", press a key to check now" if sys.stdin.isatty() else ""
     if now() < start:
         print(f"Waiting until {start:%H:%M} for {lesson.label}")
-        with CONSOLE.status(f"Waiting until {start:%H:%M} for {lesson.label}…"):
+        with CONSOLE.status(f"Waiting until {start:%H:%M} for {lesson.label}{key}…"):
             while (t := now()) < start:
-                sleep(wait_seconds(t, start, args.interval))
+                if sleep(wait_seconds(t, start, args.interval)):
+                    break
     done(f"Watching {lesson.label} until {end:%H:%M}, checking every {args.interval} s")
 
     warned = set()
@@ -232,7 +234,7 @@ def cmd_watch(args):
         pause = wait_seconds(t, end, args.interval)
         next_check = t + dt.timedelta(seconds=pause)
         with CONSOLE.status(f"Waiting for the sheet of {lesson.label}, "
-                            f"next check {next_check:%H:%M:%S}…"):
+                            f"next check {next_check:%H:%M:%S}{key}…"):
             sleep(pause)
 
     print(f"{lesson.label} ended without an open attendance sheet.")
