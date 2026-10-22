@@ -79,7 +79,7 @@ uv tool install .            # installs the `nety` command
 uv tool install --reinstall . # after pulling changes
 ```
 
-Without installing, replace `nety` with `uv run nety.py`.
+Without installing, replace `nety` with `uv run nety` (from the repository checkout).
 
 ## Usage
 

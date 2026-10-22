@@ -1,386 +1,30 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["keyring", "questionary", "requests", "rich", "tomlkit"]
-# ///
-"""Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr."""
+"""Command line: sign and settings commands."""
 
 import argparse
-import base64
 import datetime as dt
 import json
+import logging
 import os
-import re
 import subprocess
 import sys
-import time
 import tomllib
 from pathlib import Path
 
-import keyring
-import keyring.backends.fail
-import keyring.errors
 import questionary
 import requests
 import tomlkit
-from rich import box
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
-APP = "nety"
-BASE = "https://extranet.cfai-alsace.fr/netypareo/index.php"
-HOME = f"{BASE}/apprenant/accueil"
-XHR = {"X-Requested-With": "XMLHttpRequest", "Referer": HOME}
-PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-SIGNED_ICON = "picto-green-e"
-KEYS = ("login", "login_command", "password", "password_command", "signature")
-TEMPLATE = f"""\
-# {APP} configuration
-# Each of login/password takes a plain value or a *_command whose first
-# output line is the value (string: run by the shell, list: no shell).
+from . import __doc__ as DESCRIPTION
+from .client import (AuthError, find_open_seance, get_signature_form, list_seances, login,
+                     restore_session, save_session, submit_signature)
+from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
+                     read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
+from .paths import APP, config_paths
+from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
+                      login_hint)
+from .ui import CONSOLE, done, print_table, select
 
-# login = "040-xxxxx"
-# password_command = "pass show cfai/netypareo"
-# signature = "~/signature.png"
-"""
-
-VERBOSE = False
-# Progress goes to stderr; rich drops the spinner when it is not a terminal.
-CONSOLE = Console(stderr=True)
-
-
-class AuthError(Exception):
-    pass
-
-
-class ConfigError(Exception):
-    pass
-
-
-def done(msg):
-    CONSOLE.print(Text.assemble(("✓ ", "green"), msg))
-
-
-def log(msg):
-    if VERBOSE:
-        print(f"[debug] {msg}", file=sys.stderr)
-
-
-def config_paths():
-    """Candidate config files, in lookup order."""
-    paths = [Path.cwd() / f"{APP}.toml"]
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            paths.append(Path(appdata) / APP / "config.toml")
-        return paths
-    if sys.platform == "darwin":
-        paths.append(Path.home() / "Library" / "Application Support" / APP / "config.toml")
-    xdg = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    paths.append(Path(xdg) / APP / "config.toml")
-    return paths
-
-
-def cache_path():
-    """Session cookie cache: %LOCALAPPDATA%, macOS Caches or XDG cache."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Caches"
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / APP / "cookies.json"
-
-
-def load_config(explicit):
-    """Return (config dict, path) of the first config file found, or ({}, None)."""
-    if explicit:
-        if not explicit.is_file():
-            raise ConfigError(f"config file not found: {explicit}")
-        candidates = [explicit]
-    else:
-        candidates = config_paths()
-    for path in candidates:
-        if path.is_file():
-            log(f"config: {path}")
-            try:
-                cfg = tomllib.loads(path.read_text(encoding="utf-8"))
-            except tomllib.TOMLDecodeError as e:
-                raise ConfigError(f"{path}: {e}")
-            if os.name == "posix" and "password" in cfg and path.stat().st_mode & 0o077:
-                print(f"Warning: {path} holds a password and is readable by others "
-                      f"(chmod 600 it).", file=sys.stderr)
-            return cfg, path
-    log("config: none found in " + ", ".join(map(str, candidates)))
-    return {}, None
-
-
-def resolve(cfg, key):
-    """Value of `key`, or the output of `key_command`, or None."""
-    command = cfg.get(f"{key}_command")
-    if key in cfg and command is not None:
-        raise ConfigError(f"set either '{key}' or '{key}_command', not both")
-    if command is None:
-        return cfg.get(key)
-    if not isinstance(command, (str, list)):
-        raise ConfigError(f"'{key}_command' must be a string or a list")
-    try:
-        result = subprocess.run(command, shell=isinstance(command, str),
-                                capture_output=True, text=True)
-    except OSError as e:
-        raise ConfigError(f"'{key}_command' failed: {e}")
-    out = result.stdout.splitlines()[0].strip() if result.stdout.strip() else ""
-    if result.returncode != 0 or not out:
-        detail = result.stderr.strip() or f"exit code {result.returncode}, empty output"
-        raise ConfigError(f"'{key}_command' failed: {detail}")
-    return out
-
-
-def keyring_available():
-    return not isinstance(keyring.get_keyring(), keyring.backends.fail.Keyring)
-
-
-def keyring_get(user):
-    """Password stored for `user` in the system keyring, or None."""
-    try:
-        return keyring.get_password(APP, user)
-    except keyring.errors.KeyringError as e:
-        log(f"keyring: {e}")
-        return None
-
-
-def keyring_set(user, password):
-    try:
-        keyring.set_password(APP, user, password)
-    except keyring.errors.KeyringError as e:
-        raise ConfigError(f"keyring: {e}")
-
-
-def keyring_delete(user):
-    """Remove the stored password; False if there was none."""
-    try:
-        keyring.delete_password(APP, user)
-    except keyring.errors.PasswordDeleteError:
-        return False
-    except keyring.errors.KeyringError as e:
-        raise ConfigError(f"keyring: {e}")
-    return True
-
-
-def login_hint(cfg):
-    """Configured login, without prompting."""
-    return os.environ.get("NETYPAREO_LOGIN") or resolve(cfg, "login")
-
-
-def credentials(cfg):
-    """Return (login, password, source); source is env, config, keyring or prompt."""
-    login = login_hint(cfg) or questionary.text(
-        "Login:", validate=lambda v: bool(v.strip()) or "Enter a login").unsafe_ask().strip()
-    if os.environ.get("NETYPAREO_PASSWORD"):
-        return login, os.environ["NETYPAREO_PASSWORD"], "env"
-    password = resolve(cfg, "password")
-    if password:
-        return login, password, "config"
-    password = keyring_get(login)
-    if password:
-        return login, password, "keyring"
-    password = questionary.password(
-        "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
-    return login, password, "prompt"
-
-
-def login(session, user, pw):
-    # The first hit on the login page sometimes answers 500; retry once.
-    resp = session.get(BASE)
-    if not resp.ok:
-        resp = session.get(BASE)
-    resp.raise_for_status()
-    tag = re.search(r'<input[^>]*name="token_csrf"[^>]*>', resp.text)
-    value = re.search(r'value="([^"]*)"', tag.group(0)) if tag else None
-    token = value.group(1) if value else ""
-    log(f"token_csrf={token!r}")
-
-    resp = session.post(
-        f"{BASE}/authentication/",
-        data={
-            "login": user,
-            "password": pw,
-            "screenWidth": "1920",
-            "screenHeight": "1200",
-            "token_csrf": token,
-            "btnSeConnecter": "Se connecter",
-        },
-        headers={"Referer": BASE},
-        allow_redirects=False,
-    )
-    location = resp.headers.get("Location", "")
-    log(f"auth status={resp.status_code} location={location!r}")
-    if resp.status_code not in (302, 303) or "accueil" not in location:
-        raise AuthError("login failed (check login/password)")
-    session.get(HOME).raise_for_status()
-
-
-def save_session(session, user):
-    """Store the session cookies (they grant access: owner-only file)."""
-    path = cache_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    cookies = [{"name": c.name, "value": c.value, "domain": c.domain, "path": c.path,
-                "secure": c.secure, "expires": c.expires} for c in session.cookies]
-    path.write_text(json.dumps({"login": user, "cookies": cookies}), encoding="utf-8")
-    if os.name == "posix":
-        path.chmod(0o600)
-    log(f"cookies saved: {path}")
-
-
-def restore_session(session, hint):
-    """Load cached cookies; return the login if the server still accepts them, else None."""
-    path = cache_path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        user, cookies = data["login"], data["cookies"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    if hint and hint != user:
-        log(f"cookie cache is for {user}, not {hint}")
-        return None
-    for c in cookies:
-        session.cookies.set(c["name"], c["value"], domain=c["domain"], path=c["path"],
-                            secure=c["secure"], expires=c["expires"])
-    # An expired session redirects or serves the login form instead of the home page.
-    resp = session.get(HOME, allow_redirects=False)
-    log(f"cached session: HTTP {resp.status_code}")
-    if resp.status_code == 200 and "btnSeConnecter" not in resp.text:
-        return user
-    session.cookies.clear()
-    return None
-
-
-def list_seances(session, date):
-    url = f"{BASE}/planning/jour/ajax/{date:%d/%m/%Y}"
-    resp = session.get(url, params={"_": int(time.time() * 1000)}, headers=XHR)
-    resp.raise_for_status()
-    seances = []
-    for semaine in resp.json().get("semaines", []):
-        for ressource in semaine.get("ressources", []):
-            for s in ressource.get("seances", []):
-                detail = s.get("detail") or []
-                start = s.get("minuteDebut", 0)
-                end = start + s.get("duree", 0)
-                seances.append({
-                    "code": s["code"],
-                    "course": s.get("libelle", ""),
-                    "time": f"{start // 60:02d}h{start % 60:02d}-{end // 60:02d}h{end % 60:02d}",
-                    "start": start,
-                    "teacher": detail[0] if len(detail) > 0 else "",
-                    "room": detail[1] if len(detail) > 1 else "",
-                    "signed": any(SIGNED_ICON in i.get("classe", "") for i in s.get("icones", [])),
-                })
-    return sorted(seances, key=lambda s: s["start"])
-
-
-def find_open_seance(session):
-    # Same order as the browser: the modal answers 500 when nothing is open.
-    resp = session.post(f"{BASE}/emargement/ajax/has-emargement/", headers=XHR)
-    log(f"has-emargement: HTTP {resp.status_code} {resp.text[:100]!r}")
-    try:
-        if resp.ok and not resp.json().get("hasEmargement"):
-            return None
-    except json.JSONDecodeError:
-        pass
-    resp = session.get(
-        f"{BASE}/emargement/modal/emargement-ouvert/",
-        params={"_": int(time.time() * 1000)},
-        headers=XHR,
-    )
-    if not resp.ok:
-        log(f"emargement-ouvert: HTTP {resp.status_code}")
-        return None
-    m = re.search(r"var codeSeance\s*=\s*(\d+);", resp.text) or re.search(
-        r'id="modal-emargement-apprenant-(\d+)"', resp.text
-    )
-    return int(m.group(1)) if m else None
-
-
-def get_signature_form(session, code):
-    """Return (codeApprenant, antiCSRFToken), or None if the modal has no form."""
-    resp = session.get(
-        f"{BASE}/emargement/modal/signature/{code}",
-        params={"_": int(time.time() * 1000)},
-        headers=XHR,
-    )
-    if not resp.ok:
-        log(f"signature modal {code}: HTTP {resp.status_code}")
-        return None
-    token = re.search(r'name="antiCSRFTokenSignature"\s+value="([^"]*)"', resp.text)
-    apprenant = re.search(r"var codeApprenant\s*=\s*(\d+);", resp.text)
-    if not token or not apprenant:
-        log(f"signature modal {code}: no token/codeApprenant")
-        return None
-    return int(apprenant.group(1)), token.group(1)
-
-
-def submit_signature(session, code_apprenant, code_seance, token, png):
-    resp = session.post(
-        f"{BASE}/emargement-apprenant/enregistrer-signature/",
-        data={
-            "codeApprenant": code_apprenant,
-            "codeSeance": code_seance,
-            "base64": "data:image/png;base64," + base64.b64encode(png).decode(),
-            "antiCSRFToken": token,
-        },
-        headers=XHR,
-    )
-    resp.raise_for_status()
-    try:
-        body = resp.json()
-    except json.JSONDecodeError:
-        raise RuntimeError(f"unexpected response: {resp.text[:200]}")
-    if "timeStampAjout" not in body:
-        raise RuntimeError(f"unexpected response: {body}")
-    return body["timeStampAjout"]
-
-
-def select(items):
-    """Ask which open sheets to sign. Returns the chosen items."""
-    open_items = [s for s in items if s["status"] == "open"]
-    choices = [
-        questionary.Choice(f"{s['time']}  {s['course']}", value=s, checked=len(open_items) == 1)
-        for s in open_items
-    ]
-    return questionary.checkbox("Sign which?", choices=choices).ask() or []
-
-
-def print_table(items, date):
-    table = Table(title=f"Sessions on {date:%d/%m/%Y}", box=box.ROUNDED, header_style="bold")
-    for column in ("Time", "Course", "Teacher", "Room", "Status"):
-        table.add_column(column, no_wrap=column in ("Time", "Status"))
-    for s in items:
-        is_open = s["status"] == "open"
-        # Text() keeps server strings such as "[bold]" from being read as markup.
-        table.add_row(*(Text(s[k]) for k in ("time", "course", "teacher", "room")),
-                      Text(s["status"], style="bold green" if is_open else "dim"),
-                      style=None if is_open else "dim")
-    Console().print(table)
-
-
-def signature_path(cli, cfg, cfg_path):
-    """--signature, else config `signature` (relative to the config file), else ./signature.png."""
-    if cli:
-        return cli
-    if cfg_path and cfg.get("signature"):
-        path = Path(cfg["signature"]).expanduser()
-        return path if path.is_absolute() else cfg_path.parent / path
-    return Path("signature.png")
-
-
-def read_png(path):
-    try:
-        png = path.read_bytes()
-    except OSError as e:
-        raise ConfigError(f"cannot read signature: {e}")
-    if not png.startswith(PNG_MAGIC):
-        raise ConfigError(f"{path} is not a PNG file")
-    return png
+log = logging.getLogger(__name__).debug
 
 
 def cmd_sign(args):
@@ -477,49 +121,6 @@ def cmd_sign(args):
     # The server may have refreshed the cookies while we worked.
     save_session(session, user)
     return 1 if failed else 0
-
-
-def partner(key):
-    """The other form of a login/password key (`password` <-> `password_command`)."""
-    if key.endswith("_command"):
-        return key.removesuffix("_command")
-    return f"{key}_command" if key in ("login", "password") else None
-
-
-def config_problems(cfg):
-    problems = [f"unknown key '{k}'" for k in cfg if k not in KEYS]
-    problems += [f"both '{k}' and '{k}_command' are set"
-                 for k in ("login", "password") if k in cfg and f"{k}_command" in cfg]
-    return problems
-
-
-def default_config_path():
-    """Platform config file: XDG, macOS Application Support or %APPDATA%."""
-    paths = config_paths()
-    return paths[1] if len(paths) > 1 else paths[0]
-
-
-def target_config_path(explicit):
-    """File that settings commands read and write."""
-    if explicit:
-        return explicit
-    return next((p for p in config_paths() if p.is_file()), None) or default_config_path()
-
-
-def read_doc(path):
-    if not path.is_file():
-        return tomlkit.document()
-    try:
-        return tomlkit.parse(path.read_text(encoding="utf-8"))
-    except tomlkit.exceptions.TOMLKitError as e:
-        raise ConfigError(f"{path}: {e}")
-
-
-def write_doc(path, doc):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(tomlkit.dumps(doc), encoding="utf-8")
-    if os.name == "posix":
-        path.chmod(0o600)
 
 
 def cmd_settings_path(args):
@@ -729,7 +330,7 @@ def build_parser():
                         help="TOML config file (default: searched, see README)")
     common.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS)
 
-    p = argparse.ArgumentParser(description=__doc__, parents=[common])
+    p = argparse.ArgumentParser(description=DESCRIPTION, parents=[common])
     sub = p.add_subparsers(title="commands", metavar="<command>")
 
     ps = sub.add_parser("sign", parents=[common], help="list attendance sheets and sign open ones")
@@ -768,10 +369,11 @@ def build_parser():
 
 
 def main():
-    global VERBOSE
     p = build_parser()
     args = p.parse_args()
-    VERBOSE = getattr(args, "verbose", False)
+    if getattr(args, "verbose", False):
+        logging.basicConfig(level=logging.WARNING, format="[debug] %(message)s")
+        logging.getLogger(__package__).setLevel(logging.DEBUG)
     args.config = getattr(args, "config", None)
     if not hasattr(args, "func"):
         p.print_help()
@@ -790,7 +392,3 @@ def run():
         sys.exit(f"Network error: {e}")
     except KeyboardInterrupt:
         sys.exit(130)
-
-
-if __name__ == "__main__":
-    run()
