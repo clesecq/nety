@@ -1,6 +1,6 @@
 [project]
 name = "nety"
-dynamic = ["version"]
+version = "0.8.0"
 description = "Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,9 +19,6 @@ nety = "nety.cli:run"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.version]
-path = "src/nety/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nety"]

@@ -3,6 +3,7 @@ import datetime as dt
 import re
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 import questionary
@@ -105,6 +106,97 @@ def test_main_reports_config_error(monkeypatch, tmp_path, capsys):
                                      str(tmp_path / "missing.toml")])
     assert cli.main() == 2
     assert "Config error" in capsys.readouterr().err
+
+
+pauses = []
+
+
+def menu_main(monkeypatch, tty, *argv):
+    monkeypatch.setattr("builtins.input", lambda prompt="": pauses.append(prompt) or "")
+    monkeypatch.setattr("sys.argv", ["nety", *argv])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: tty)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: tty)
+    return cli.main()
+
+
+def test_no_command_without_tty_prints_help(monkeypatch, capsys):
+    assert menu_main(monkeypatch, False) == 2
+    assert "commands" in capsys.readouterr().out
+
+
+def test_menu_quit(monkeypatch, answers):
+    pauses.clear()
+    answers.queue.append("Quit")
+    assert menu_main(monkeypatch, True) == 0
+    assert pauses == []
+
+
+def test_menu_runs_sign_with_config(monkeypatch, answers, tmp_path):
+    pauses.clear()
+    seen = []
+    monkeypatch.setattr(cli, "cmd_sign", lambda args: seen.append(args) or 0)
+    answers.queue.append("Sign attendance sheets")
+    assert menu_main(monkeypatch, True, "--config", str(tmp_path / "c.toml")) == 0
+    assert seen[0].config == tmp_path / "c.toml"
+    assert seen[0].all is False
+    assert pauses == ["Press Enter to exit…"]
+
+
+def test_menu_settings_show_then_back(monkeypatch, answers, tmp_path, capsys):
+    path = tmp_path / "c.toml"
+    path.write_text('login = "040-1"\n')
+    # Back returns to the main menu; then Settings -> Show.
+    answers.queue += ["Settings", 7, "Settings", 1]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert 'login = 040-1' in capsys.readouterr().out
+
+
+def test_menu_leaves_menu_argv_untouched(monkeypatch, answers, tmp_path):
+    monkeypatch.setattr(cli, "cmd_sign", lambda args: 0)
+    answers.queue.append("Sign attendance sheets")
+    menu_main(monkeypatch, True, "--config", str(tmp_path / "c.toml"), "--verbose")
+    assert cli.MAIN_MENU[0][1] == ["sign"]
+
+
+def test_menu_set_value_starting_with_dash(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "login", "-abc"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"login": "-abc"}
+
+
+def test_menu_set_command_is_split(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "password_command", "pass -x show"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"password_command": ["pass", "-x", "show"]}
+
+
+def test_menu_pauses_after_network_error(monkeypatch, answers, capsys):
+    def boom(args):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(cli, "cmd_sign", boom)
+    pauses.clear()
+    answers.queue.append("Sign attendance sheets")
+    assert menu_main(monkeypatch, True) == 1
+    assert "Network error: down" in capsys.readouterr().err
+    assert pauses == ["Press Enter to exit…"]
+
+
+def test_menu_pauses_after_argument_error(monkeypatch, answers):
+    monkeypatch.setattr(cli, "MAIN_MENU", [("Bad", ["sign", "--nope"])])
+    pauses.clear()
+    answers.queue.append("Bad")
+    assert menu_main(monkeypatch, True) == 2
+    assert pauses == ["Press Enter to exit…"]
+
+
+def test_menu_settings_set_value(monkeypatch, answers, tmp_path):
+    path = tmp_path / "c.toml"
+    answers.queue += ["Settings", 3, "login", "040-9"]
+    assert menu_main(monkeypatch, True, "--config", str(path)) == 0
+    assert read(path) == {"login": "040-9"}
 
 
 def mock_extranet(requests_mock):
@@ -500,3 +592,13 @@ def test_watch_key_presses_are_rate_limited(watch_env, monkeypatch):
     assert watch_env(fake) == 0
     gaps = [(b - a).total_seconds() for a, b in zip(checks, checks[1:])]
     assert gaps and all(gap >= cli.MIN_GAP for gap in gaps)
+
+
+def test_version_matches_pyproject(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["nety", "--version"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    assert capsys.readouterr().out.split()[-1] == version

@@ -5,7 +5,7 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 ## Setup
 
 1. [Install](#install) the command: a prebuilt binary, or with [uv](https://docs.astral.sh/uv/).
-2. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
+2. Run `nety` with no command for a menu (on a terminal), or `nety settings init` directly. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
@@ -149,6 +149,6 @@ uv run pytest        # tests use recorded responses in tests/fixtures, no networ
 uv run nety --help
 ```
 
-To release, bump `__version__` in `src/nety/__init__.py`, commit, then `git tag vX.Y.Z && git push origin main --tags`. The tag must point to a commit on `main`. The `Release` workflow runs the tests, builds the binaries with PyInstaller (`nety.spec`) and publishes them. `.github/release_notes.py` writes the release notes from the commits since the previous tag (Conventional Commits: `feat`, `fix`, `perf` get their own section). Preview them with `python3 .github/release_notes.py vX.Y.Z` once the tag exists locally. To build one locally: `uv sync --no-dev --group build && uv run --no-sync pyinstaller nety.spec`, then `dist/nety selfcheck`. On Linux with a uv-managed Python, prefix the build with `LD_LIBRARY_PATH="$(uv run python -c 'import sys; print(sys.base_prefix)')/lib"` or Tk is left out. Run it by hand (`workflow_dispatch`) to build without publishing.
+To release, bump `version` in `pyproject.toml`, commit, then `git tag vX.Y.Z && git push origin main --tags`. The tag must point to a commit on `main`. The `Release` workflow runs the tests, builds the binaries with PyInstaller (`nety.spec`) and publishes them. `.github/release_notes.py` writes the release notes from the commits since the previous tag (Conventional Commits: `feat`, `fix`, `perf` get their own section). Preview them with `python3 .github/release_notes.py vX.Y.Z` once the tag exists locally. To build one locally: `uv sync --no-dev --group build && uv run --no-sync pyinstaller nety.spec`, then `dist/nety selfcheck`. On Linux with a uv-managed Python, prefix the build with `LD_LIBRARY_PATH="$(uv run python -c 'import sys; print(sys.base_prefix)')/lib"` or Tk is left out. Run it by hand (`workflow_dispatch`) to build without publishing.
 
 Fixtures come from a real session with names, ids and tokens replaced. Never commit a raw `.har` file.

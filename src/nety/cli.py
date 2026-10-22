@@ -16,7 +16,7 @@ import questionary
 import requests
 import tomlkit
 
-from . import __doc__ as DESCRIPTION
+from . import __doc__ as DESCRIPTION, __version__
 from .client import AuthError, Lesson, Netypareo, SessionExpired
 from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
@@ -538,6 +538,7 @@ def build_parser():
     common.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS)
 
     p = argparse.ArgumentParser(description=DESCRIPTION, parents=[common])
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(title="commands", metavar="<command>")
 
     ps = sub.add_parser("sign", parents=[common], help="list attendance sheets and sign open ones")
@@ -598,16 +599,63 @@ def build_parser():
     return p
 
 
-def main():
-    p = build_parser()
-    args = p.parse_args()
-    if getattr(args, "verbose", False):
-        logging.basicConfig(level=logging.WARNING, format="[debug] %(message)s")
-        logging.getLogger(__package__).setLevel(logging.DEBUG)
-    args.config = getattr(args, "config", None)
-    if not hasattr(args, "func"):
-        p.print_help()
-        return 2
+def ask_set(unset=False):
+    """argv for `settings set|unset`, asking which key (and value) to use."""
+    verb = "unset" if unset else "set"
+    key = questionary.select(f"Which setting to {verb}?", choices=list(KEYS)).unsafe_ask()
+    argv = ["settings", verb, key]
+    if key == "password" and keyring_available() and questionary.confirm(
+            "Use the system keyring?", default=True).unsafe_ask():
+        return argv + ["--keyring"]
+    if not unset and key != "password":
+        value = questionary.text(f"{key}:").unsafe_ask().strip()
+        # "--": a value may start with a dash.
+        argv += ["--", *(shlex.split(value) if key.endswith("_command") else [value])]
+    return argv
+
+
+# (title, argv or a callable returning it); None quits or goes back.
+MAIN_MENU = [
+    ("Sign attendance sheets", ["sign"]),
+    ("Watch the current lesson", ["watch"]),
+    ("Settings", None),
+    ("Draw a signature", ["signature", "draw"]),
+    ("Quit", None),
+]
+SETTINGS_MENU = [
+    ("Set up interactively", ["settings", "init"]),
+    ("Show settings", ["settings", "show"]),
+    ("Show settings, resolved", ["settings", "show", "--resolve"]),
+    ("Set a value", lambda: ask_set()),
+    ("Remove a value", lambda: ask_set(unset=True)),
+    ("Print the config file path", ["settings", "path"]),
+    ("Edit the config file", ["settings", "edit"]),
+    ("Back", None),
+]
+
+
+def choose(message, entries):
+    """argv of the picked entry, or None for a quit/back entry."""
+    picked = questionary.select(
+        message, choices=[questionary.Choice(title, value=i) for i, (title, _) in enumerate(entries)]
+    ).unsafe_ask()
+    argv = entries[picked][1]
+    return argv() if callable(argv) else argv
+
+
+def menu_argv():
+    """argv for the action picked in the menu, or None to quit."""
+    while True:
+        title = questionary.select("What do you want to do?", choices=[
+            questionary.Choice(t, value=t) for t, _ in MAIN_MENU]).unsafe_ask()
+        if title != "Settings":
+            return dict(MAIN_MENU)[title]
+        argv = choose("Settings:", SETTINGS_MENU)
+        if argv:
+            return argv
+
+
+def dispatch(args):
     try:
         return args.func(args)
     except ConfigError as e:
@@ -621,6 +669,42 @@ def main():
     except SessionExpired as e:
         print(f"Error: the session expired ({e}). Run the command again.", file=sys.stderr)
         return 2
+    except requests.RequestException as e:
+        print(f"Network error: {e}", file=sys.stderr)
+        return 1
+
+
+def main():
+    p = build_parser()
+    args = p.parse_args()
+    if getattr(args, "verbose", False):
+        logging.basicConfig(level=logging.WARNING, format="[debug] %(message)s")
+        logging.getLogger(__package__).setLevel(logging.DEBUG)
+    args.config = getattr(args, "config", None)
+    if not hasattr(args, "func"):
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            p.print_help()
+            return 2
+        argv = menu_argv()
+        if not argv:
+            return 0
+        # Carry the top-level options into the chosen command. They go first: the command
+        # may end with values that start with a dash. A new list: argv belongs to the menu.
+        options = (["--config", str(args.config)] if args.config else []) + (
+            ["--verbose"] if getattr(args, "verbose", False) else [])
+        # Keep the output readable when the terminal closes with the process.
+        try:
+            args = p.parse_args([*options, *argv])
+            args.config = getattr(args, "config", None)
+            code = dispatch(args)
+        except SystemExit as e:
+            code = e.code
+        try:
+            input("Press Enter to exit…")
+        except EOFError:
+            pass
+        return code
+    return dispatch(args)
 
 
 def run():

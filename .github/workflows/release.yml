@@ -29,7 +29,7 @@ jobs:
           # Same version the binaries embed (setup-python in the build job).
           python-version: "3.13"
       - run: uv run --locked pytest
-      - name: Check tag matches __version__
+      - name: Check tag matches the version
         if: startsWith(github.ref, 'refs/tags/')
         run: test "${GITHUB_REF_NAME#v}" = "$(uv run --locked python -c 'import nety; print(nety.__version__)')"
       - name: Check tag is on main
