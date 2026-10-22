@@ -86,7 +86,7 @@ nety sign --dry-run    # list and select, do not sign
 nety sign --date 20/10/2026 --verbose
 ```
 
-At the prompt, enter `1,3`, `1-3`, or `a` for all open sessions. Press Enter with no input to cancel.
+At the prompt, a single open session is pre-checked and closed ones are greyed out. Use Space to toggle, Enter to confirm, Ctrl-C to cancel.
 
 `--config PATH` and `--verbose` work with every command. Running without a command prints help.
 

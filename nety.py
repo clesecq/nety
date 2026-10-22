@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["requests", "tomlkit"]
+# dependencies = ["questionary", "requests", "tomlkit"]
 # ///
 """Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr."""
 
@@ -17,6 +17,7 @@ import time
 import tomllib
 from pathlib import Path
 
+import questionary
 import requests
 import tomlkit
 
@@ -236,51 +237,31 @@ def submit_signature(session, code_apprenant, code_seance, token, png):
     return body["timeStampAjout"]
 
 
-def parse_selection(text, count):
-    picked = set()
-    for part in text.replace(" ", "").split(","):
-        if not part:
-            continue
-        if "-" in part:
-            lo, hi = part.split("-", 1)
-            picked.update(range(int(lo), int(hi) + 1))
-        else:
-            picked.add(int(part))
-    if any(i < 1 or i > count for i in picked):
-        raise ValueError("index out of range")
-    return sorted(picked)
+def table_lines(items):
+    """Aligned rows (header first) built from the séance data."""
+    rows = [("Time", "Course", "Teacher", "Room", "Status")]
+    rows += [(s["time"], s["course"], s["teacher"], s["room"], s["status"]) for s in items]
+    widths = [max(len(r[c]) for r in rows) for c in range(len(rows[0]))]
+    return ["  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip() for r in rows]
 
 
 def select(items):
     """Ask which open sheets to sign. Returns the chosen items."""
-    open_items = [s for s in items if s["status"] == "open"]
-    while True:
-        answer = input("Sign which? (e.g. 1,3 or 1-3, a = all open, empty = cancel): ").strip().lower()
-        if not answer:
-            return []
-        if answer == "a":
-            return open_items
-        try:
-            chosen = [items[i - 1] for i in parse_selection(answer, len(items))]
-        except ValueError as e:
-            print(f"Invalid selection: {e}")
-            continue
-        not_open = [str(items.index(s) + 1) for s in chosen if s["status"] != "open"]
-        if not_open:
-            print(f"Not open for signing: {', '.join(not_open)}")
-            continue
-        return chosen
+    header, *lines = table_lines(items)
+    single = sum(s["status"] == "open" for s in items) == 1
+    choices = [
+        questionary.Choice(line, value=s, checked=single)
+        if s["status"] == "open" else questionary.Choice(line, value=s, disabled=s["status"])
+        for line, s in zip(lines, items)
+    ]
+    answer = questionary.checkbox(
+        "Sign which?", choices=choices, instruction=f"\n    {header}"
+    ).ask()
+    return answer or []
 
 
 def print_table(items):
-    rows = [("#", "Time", "Course", "Teacher", "Room", "Status")]
-    rows += [
-        (str(i), s["time"], s["course"], s["teacher"], s["room"], s["status"])
-        for i, s in enumerate(items, 1)
-    ]
-    widths = [max(len(r[c]) for r in rows) for c in range(len(rows[0]))]
-    for r in rows:
-        print("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
+    print("\n".join(table_lines(items)))
 
 
 def signature_path(cli, cfg, cfg_path):
@@ -332,12 +313,16 @@ def cmd_sign(args):
     if not items:
         print(f"Nothing left to sign on {args.date:%d/%m/%Y}.")
         return 0
-    print_table(items)
     if not any(s["status"] == "open" for s in items):
+        print_table(items)
         print("No open émargement.")
         return 0
 
-    chosen = [s for s in items if s["status"] == "open"] if args.all else select(items)
+    if args.all:
+        print_table(items)
+        chosen = [s for s in items if s["status"] == "open"]
+    else:
+        chosen = select(items)
     if not chosen:
         print("Nothing selected.")
         return 0

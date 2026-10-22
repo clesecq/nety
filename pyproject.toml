@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["requests", "tomlkit"]
+dependencies = ["questionary", "requests", "tomlkit"]
 
 [project.scripts]
 nety = "nety:run"
