@@ -6,7 +6,7 @@ Signs Netypareo attendance sheets (émargement) on `extranet.cfai-alsace.fr`.
 
 1. Install [uv](https://docs.astral.sh/uv/).
 2. [Install](#install) the command.
-3. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature PNG (transparent background works best). Missing values are prompted for at each run.
+3. Run `nety settings init`. It asks for your login, a password (system keyring, value or command) and a signature: draw it in a window or pick a PNG (transparent background works best). Missing values are prompted for at each run.
 
 ## Configuration
 
@@ -63,6 +63,17 @@ nety settings edit                  # open in $VISUAL / $EDITOR (notepad on Wind
 
 Setting `password` removes `password_command`, and the other way round (same for `login`).
 
+### Signature command
+
+```sh
+nety signature draw                 # draw in a window, save signature.png next to the config file, set `signature`
+nety signature draw --output ~/sig.png
+```
+
+Draw with the mouse, then press Enter or Save. Esc or Cancel quits without saving. The PNG has a transparent background and is cropped to the ink. `nety sign` offers to draw one when the signature file is missing.
+
+The window needs a display and tkinter. The uv-managed Python that `uv tool install` uses ships it. A system Python may need a package such as `python3-tkinter`.
+
 ## Install
 
 ```sh
@@ -104,7 +115,7 @@ HAR files hold your password and session cookies in plain text. Do not share or 
 
 ## Development
 
-Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `cli.py` (commands).
+Code lives in `src/nety/`: `client.py` (extranet HTTP calls), `config.py`, `secrets.py` (login, password, keyring), `ui.py` (table and prompts), `draw.py` (signature window), `cli.py` (commands).
 
 ```sh
 uv run pytest        # tests use recorded responses in tests/fixtures, no network

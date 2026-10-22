@@ -4,7 +4,14 @@ dynamic = ["version"]
 description = "Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["keyring", "questionary", "requests", "rich", "tomlkit"]
+dependencies = [
+    "keyring",
+    "pillow>=13.0.0",
+    "questionary",
+    "requests",
+    "rich",
+    "tomlkit",
+]
 
 [project.scripts]
 nety = "nety.cli:run"

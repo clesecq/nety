@@ -1,4 +1,4 @@
-"""Command line: sign and settings commands."""
+"""Command line: sign, settings and signature commands."""
 
 import argparse
 import datetime as dt
@@ -19,6 +19,7 @@ from . import __doc__ as DESCRIPTION
 from .client import AuthError, Lesson, Netypareo
 from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
+from .draw import draw_signature
 from .paths import APP, config_paths
 from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
                       login_hint)
@@ -108,9 +109,50 @@ def sign_lessons(client, lessons, png, dry_run):
     return failed
 
 
+def draw_to(path):
+    """Open the drawing window for `path`. Returns True once the PNG is saved."""
+    if path.exists() and not questionary.confirm(
+            f"{path} exists. Overwrite?", default=False).unsafe_ask():
+        return False
+    if not draw_signature(path):
+        print("Cancelled.")
+        return False
+    done(f"Saved signature to {path}")
+    return True
+
+
+def draw_and_store(config, path=None):
+    """Draw a signature and set `signature` in the config file. Returns the PNG path or None."""
+    cfg_file = target_config_path(config)
+    path = (path or cfg_file.parent / "signature.png").expanduser().resolve()
+    if not draw_to(path):
+        return None
+    doc = read_doc(cfg_file)
+    doc["signature"] = str(path)
+    write_doc(cfg_file, doc)
+    print(f"Set 'signature' in {cfg_file}")
+    return path
+
+
+def load_signature(args, cfg, cfg_path):
+    """The signature PNG bytes; offers to draw one when the file is missing."""
+    path = signature_path(args.signature, cfg, cfg_path)
+    if not path.exists() and sys.stdin.isatty() and questionary.confirm(
+            f"No signature at {path}. Draw one now?", default=True).unsafe_ask():
+        # An explicit --signature is drawn in place; otherwise it goes next to the config.
+        if args.signature:
+            if not draw_to(path):
+                raise ConfigError("no signature drawn")
+        else:
+            path = draw_and_store(args.config)
+            if not path:
+                raise ConfigError("no signature drawn")
+    return read_png(path)
+
+
 def cmd_sign(args):
     cfg, cfg_path = load_config(args.config)
-    png = None if args.dry_run else read_png(signature_path(args.signature, cfg, cfg_path))
+    png = None if args.dry_run else load_signature(args, cfg, cfg_path)
 
     client = Netypareo()
     user = authenticate(client, cfg)
@@ -301,9 +343,19 @@ def cmd_settings_init(args):
             return str(e)
         return True
 
-    answer = questionary.path("Signature PNG (empty to skip):", validate=check_png).unsafe_ask()
-    if answer.strip():
-        doc["signature"] = str(Path(answer.strip()).expanduser().resolve())
+    choice = questionary.select("Signature:", choices=[
+        questionary.Choice("Draw one", value="draw"),
+        questionary.Choice("Use a PNG file", value="file"),
+        questionary.Choice("Skip", value="skip"),
+    ]).unsafe_ask()
+    if choice == "draw":
+        signature = path.parent.expanduser().resolve() / "signature.png"
+        if draw_to(signature):
+            doc["signature"] = str(signature)
+    elif choice == "file":
+        answer = questionary.path("Signature PNG:", validate=check_png).unsafe_ask()
+        if answer.strip():
+            doc["signature"] = str(Path(answer.strip()).expanduser().resolve())
 
     write_doc(path, doc)
     print(f"Wrote {path}")
@@ -341,6 +393,10 @@ def cmd_settings_edit(args):
     for problem in problems:
         print(f"Problem in {path}: {problem}", file=sys.stderr)
     return 2 if problems else 0
+
+
+def cmd_signature_draw(args):
+    return 0 if draw_and_store(args.config, args.output) else 1
 
 
 def build_parser():
@@ -385,6 +441,15 @@ def build_parser():
     a.set_defaults(func=cmd_settings_path)
     a = actions.add_parser("edit", parents=[common], help="open the config file in $VISUAL/$EDITOR")
     a.set_defaults(func=cmd_settings_edit)
+
+    pd = sub.add_parser("signature", parents=[common], help="create the signature image")
+    pd.set_defaults(func=lambda _args: pd.print_help() or 2)
+    actions = pd.add_subparsers(title="actions", metavar="<action>")
+    a = actions.add_parser("draw", parents=[common],
+                           help="draw it in a window, save the PNG and set 'signature'")
+    a.add_argument("--output", type=Path,
+                   help="PNG to write (default: signature.png next to the config file)")
+    a.set_defaults(func=cmd_signature_draw)
     return p
 
 

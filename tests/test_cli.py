@@ -86,7 +86,7 @@ def test_init_writes_config(tmp_path, answers):
     sig = tmp_path / "sig.png"
     sig.write_bytes(PNG)
     target = tmp_path / "new.toml"
-    answers.queue += ["040-7", "command", "pass show x", str(sig)]
+    answers.queue += ["040-7", "command", "pass show x", "file", str(sig)]
     assert cli.cmd_settings_init(argparse.Namespace(config=target)) == 0
     assert read(target) == {"login": "040-7", "password_command": "pass show x",
                             "signature": str(sig)}
@@ -229,3 +229,68 @@ def test_edit_blank_editor(tmp_path, monkeypatch):
 def test_keyring_set_without_backend_does_not_prompt(cfg_file, answers):
     with pytest.raises(config.ConfigError, match="no system keyring"):
         cli.cmd_settings_set(ns(cfg_file, key="password", value=[], keyring=True))
+
+
+def fake_draw(monkeypatch, saved=True):
+    calls = []
+
+    def draw(path):
+        calls.append(path)
+        if saved:
+            path.write_bytes(PNG)
+        return saved
+
+    monkeypatch.setattr(cli, "draw_signature", draw)
+    return calls
+
+
+def test_signature_draw_sets_config(cfg_file, monkeypatch):
+    calls = fake_draw(monkeypatch)
+    assert cli.cmd_signature_draw(ns(cfg_file, output=None)) == 0
+    assert calls == [cfg_file.parent / "signature.png"]
+    assert read(cfg_file) == {"login": "040-1", "signature": str(calls[0])}
+
+
+def test_signature_draw_cancelled_keeps_config(cfg_file, monkeypatch, capsys):
+    fake_draw(monkeypatch, saved=False)
+    assert cli.cmd_signature_draw(ns(cfg_file, output=None)) == 1
+    assert read(cfg_file) == {"login": "040-1"}
+    assert "Cancelled." in capsys.readouterr().out
+
+
+def test_signature_draw_asks_before_overwrite(cfg_file, monkeypatch, answers):
+    calls = fake_draw(monkeypatch)
+    (cfg_file.parent / "signature.png").write_bytes(PNG)
+    answers.queue.append(False)
+    assert cli.cmd_signature_draw(ns(cfg_file, output=None)) == 1
+    assert calls == []
+
+
+def test_init_draws_signature(tmp_path, answers, monkeypatch):
+    calls = fake_draw(monkeypatch)
+    target = tmp_path / "new.toml"
+    answers.queue += ["", "none", "draw"]
+    assert cli.cmd_settings_init(argparse.Namespace(config=target)) == 0
+    assert read(target) == {"signature": str(tmp_path / "signature.png")}
+    assert calls == [tmp_path / "signature.png"]
+
+
+def test_sign_offers_to_draw_missing_signature(cfg_file, monkeypatch, answers, requests_mock,
+                                               capsys):
+    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
+    calls = fake_draw(monkeypatch)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    answers.queue.append(True)
+    submit = mock_extranet(requests_mock)
+    assert cli.cmd_sign(sign_args(cfg_file, None)) == 0
+    assert calls == [cfg_file.parent / "signature.png"]
+    assert read(cfg_file)["signature"] == str(calls[0])
+    assert submit.call_count == 1
+
+
+def test_sign_missing_signature_without_tty(cfg_file, monkeypatch):
+    calls = fake_draw(monkeypatch)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    with pytest.raises(config.ConfigError):
+        cli.cmd_sign(sign_args(cfg_file, None))
+    assert calls == []
