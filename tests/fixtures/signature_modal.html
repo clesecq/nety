@@ -1,0 +1,252 @@
+<div class="remote-layout-container">
+        <link href="/netypareo/css/view/emargement_items.css?v=3.34.17" media="all" rel="stylesheet" type="text/css">
+<style type="text/css">
+
+  .block-success-emargement-apprenant {
+    padding: 15px;
+  }
+  .picto-extra-large {
+    font-size: 55px !important;
+    line-height: 60px !important;
+  }
+
+  @media (min-width: 768px) {
+    .modale-signature {
+      width: 500px;
+      height: 630px;
+    }
+
+    .block-success-emargement-apprenant {
+      margin: 100px auto;
+      min-height: 300px;
+      padding: 15px;
+      background-color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .picto-extra-large {
+      font-size: 60px !important;
+      line-height: 65px !important;
+    }
+  }
+</style>
+<div  class="modale-signature modal" id="modal-signature-apprenant-10000016ad601fc2adef548433347" data-apply="Modal">
+<div class="modal-header">
+<div class="modal-title">DOE Jane</div>
+<a href="javascript:void(0)" class="modal-close" data-dismiss="Modal"></a>
+</div>
+<div class="modal-body">
+<div class="modal-padding modal-signature-interne">
+  <input type="hidden" autocomplete="off" name="antiCSRFTokenSignature"
+         value="signature-csrf-token">
+  <div id="zoneSignature">
+    <div class="canvasParent js-canvas-parent">
+      <canvas class="canvas js-canvas"></canvas>
+    </div>
+    <a href="javascript:void(0)" class="js-clear-canvas">
+      <i class="fal fa-eraser margin-right-3px"></i>
+      Recommencer
+    </a>
+  </div>
+
+  <div class="margin-bottom-1lh text-center hidden js-text-erreur">
+    <span class="text-red">La présence d'une signature est obligatoire.</span>
+  </div>
+
+  <div class="margin-bottom-1lh block-success-emargement-apprenant text-center hidden" id="messageErreurSignature">
+    <div class="text-red picto-extra-large margin-bottom-1lh"><i class="fal fa-times-circle"></i></div>
+    <div>
+       <span class="text-extra-large">
+      <b>Une erreur est survenue</b>
+      <br>
+      L'émargement que vous essayez d'atteindre n'est plus disponible.
+      <br>
+    </span>
+    </div>
+  </div>
+
+</div>
+</div>
+    <div class="modal-footer">
+<span class="btn btn-primary btn-submit js-enregistrer-signature">Enregistrer</span>
+<span class="btn btn-close" data-dismiss="Modal">Annuler</span>
+
+</div>
+</div>
+
+<script>(function(application) { 
+    'use strict'; 
+
+    application.onReady(function() {
+        application.setRoutes([{"name":"@enregistrerSignatureApp","pathinfo":"\/emargement-apprenant\/enregistrer-signature\/","parameters":[]}]);
+    });
+})(application);</script>
+<script src="/netypareo/js/vendor/signaturepad/signature_pad.umd.js?v=3.34.17" type="text/javascript" charset="windows-1252"></script>
+<script type="text/javascript">
+    (function(application, $y, $) {
+
+        'use strict';
+
+        var codeApprenant = 1000001;
+        var codeSeance    = 4819992;
+        var uniqueId      = 'modal-signature-apprenant-10000016ad601fc2adef548433347';
+        var urlSignature  = '';
+
+        application.onReady(function () {
+
+            var $modal = $('#' + uniqueId),
+                modal = $y.Registry.get($modal, 'Modal'),
+                $canvasParent = $modal.find('.js-canvas-parent'),
+                $canvas = $modal.find('.js-canvas'),
+                $textErreur = $modal.find('.js-text-erreur'),
+                $btnEnregistrer = $modal.find('.js-enregistrer-signature'),
+                imgW = undefined,
+                imgH = undefined;
+
+            // Mise à jour de la data signaturePad après initialisation
+            var $signaturePad  = new SignaturePad($canvas[0]);
+
+            // Mise à jour de la taille du canvas
+            modal.onShown(function () {
+
+                // Création d'un carré pour la compatibilité mobile/desktop
+                $canvasParent.css('height', ($canvasParent.outerWidth() -2) + 'px');
+
+                // A cause de la bordure, le parent fait 2px à vide. Cela s'ajoute au canvas, et à chaque ouverture
+                // de la modale les 2px sont rajoutés, ce qui fait qu'après 2 ouvertures on a 4px en plus, etc.
+                // Le canvas ne cesse de grandir à chaque ouverture si on ne retire pas les 2px.
+                var parentWidth  = $canvasParent.outerWidth() - 2;
+                var parentHeight = $canvasParent.outerHeight() - 2;
+                $canvas.attr('width', parentWidth + 'px').attr('height', parentHeight + 'px');
+
+                insertSignatureInCanvas(urlSignature);
+            });
+
+            // Clic sur le bouton "Recommencer" qui efface le canvas
+            $('.js-clear-canvas').on('click', function () {
+               $signaturePad.clear();
+            });
+
+            // Enregistrement de la signature
+            $btnEnregistrer.on('click', function () {
+
+                $textErreur.addClass('hidden');
+
+                if ($signaturePad.isEmpty()) {
+                    $textErreur.removeClass('hidden');
+                }
+                else {
+                    $.ajax({
+                        type      : 'post',
+                        url       : application.url('@enregistrerSignatureApp'),
+                        data      : {
+                            codeApprenant: codeApprenant,
+                            codeSeance   : codeSeance,
+                            base64       : $signaturePad.toDataURL(),
+                            antiCSRFToken: $modal.find('input[name="antiCSRFTokenSignature"]').val()
+                        },
+                        beforeSend: function () {
+                            application.modalePatience.start('update');
+                        }
+                    })
+                        .done(function (response) {
+
+                            // Si la session a été fermée depuis ou annulée, on affiche le message d'erreur
+                            if (response.erreurFermeture) {
+
+                                $modal.find('#messageErreurSignature').removeClass('hidden');
+                                $modal.find('#zoneSignature').addClass('hidden');
+                                $btnEnregistrer.addClass('hidden');
+                            }
+                            else {
+
+                                // Notification que la signature a été enregistrée
+                                var date = new Date(response.timeStampAjout * 1000);
+
+                                $y.NotificationFactory.success(
+                                    'Signature enregistrée le '+ date.get('DD/MM') +' à ' +
+                                    ("0" + date.getHours()).slice(-2) + 'h' +
+                                    ("0" + date.getMinutes()).slice(-2)
+                                );
+
+                                modal.hide();
+                            }
+
+                            // On prévient le layout que la modale est fermée et qu'il faut chercher si un autre émargement est ouvert
+                            $y.sharedEventManager.trigger('modaleSignatureEmargementClosed');
+                        })
+                        .fail(function () {
+                            $y.NotificationFactory.error('Une erreur est apparue, la signature n\'a pas été enregistrée.');
+                        })
+                        .always(function () {
+                            application.modalePatience.stop();
+                        });
+                }
+
+            });
+
+
+            /**
+             * Obtient la taille de l'image de la signature, pour ensuite pouvoir l'adapter sur un autre média
+             * (de desktop à mobile, et inversement)
+             *
+             * @param url {String} Url de l'image (base64 ou PNG)
+             * @returns {Promise}
+             */
+            function getImageSize(url) {
+
+                var self = this;
+
+                return new Promise(function (resolve, _reject) {
+                    var downloadedImg = new Image();
+                    downloadedImg.addEventListener(
+                        'load',
+                        function () {
+                            imgW = downloadedImg.width;
+                            imgH = downloadedImg.height;
+                            resolve();
+                        },
+                        false
+                    );
+                    downloadedImg.src = url;
+                });
+            }
+
+            /**
+             * Affiche l'image de la signature dans le canvas.
+             * On est obligé de passer la signature en paramètres à cause des soucis de mise à jour des props du
+             * composant qui ne permettait pas de passer la signature par les props (elle était toujours undefined).
+             *
+             * @param {String} urlSignature
+             */
+            function insertSignatureInCanvas(urlSignature) {
+
+                if (urlSignature === null || urlSignature === '') {
+                    return;
+                }
+
+                var $canvas   = $('.js-canvas');
+                var canvasW   = $canvas.width(),
+                    canvasH   = $canvas.height();
+
+                // Installation de l'image de la signature dans le canvas
+                getImageSize(urlSignature).then(function() {
+
+                    // Calcul du ratio pour adapter l'image (si elle a était faite dans une autre résolution)
+                    var hRatio =  canvasW / imgW;
+                    var vRatio = canvasH / imgH;
+                    var ratio  = Math.min ( hRatio, vRatio );
+
+                    var width = imgW * ratio;
+                    var height = imgH * ratio;
+
+                    $signaturePad.fromDataURL(urlSignature, { width:width, height:height, ratio:ratio });
+                });
+            }
+        });
+
+    })(application, ymag, jQuery);
+</script>
+</div>

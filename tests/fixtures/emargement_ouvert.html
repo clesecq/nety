@@ -1,0 +1,95 @@
+<div class="remote-layout-container">
+    <div  id="modal-emargement-apprenant-4819992" class="modal" data-apply="Modal" data-modal-width="400">
+<div class="modal-header">
+<div class="modal-title">Emargement</div>
+<a href="javascript:void(0)" class="modal-close" data-dismiss="Modal"></a>
+</div>
+<div class="modal-body">
+<div class="modal-padding">
+  <p>
+    Votre séance de Informatique et Bureautique    de 14h00 à 18h00 dispensée par M. TEACHERA est ouverte pour émargement.
+  </p>
+</div>
+
+</div>
+    <div class="modal-footer">
+<span class="btn btn-primary btn-submit js-btn-signer">Signer</span>
+<span class="btn btn-close js-btn-fermer">Fermer</span>
+</div>
+</div>
+
+<script>(function(application) { 
+    'use strict'; 
+
+    application.onReady(function() {
+        application.setRoutes([{"name":"@modaleSignatureApprenant","pathinfo":"\/emargement\/modal\/signature\/","parameters":[{"isOptionnal":false,"defaultValue":null,"name":"codeSeance","position":0}]},{"name":"@enregistrerNePlusMeProposer","pathinfo":"\/emargement\/enregistrer-ne-plus-proposer\/","parameters":[]}]);
+    });
+})(application);</script>
+<script type="text/javascript">
+    (function(application, $y, $) {
+
+        'use strict';
+
+        var codeSeance = 4819992;
+
+        application.onReady(function () {
+
+            var modal = $y.Registry.get('#modal-emargement-apprenant-4819992', 'Modal');
+
+            // Ouverture de la modale de signature
+            $('.js-btn-signer').on('click', function () {
+
+                application.ajaxModal(
+                    application.url('@modaleSignatureApprenant', {codeSeance: codeSeance}),
+                    true
+                );
+
+                modal.hide();
+            });
+
+            // Fermeture de la modale, on propose si l'apprenant ne veut plus être notifié
+            $('.js-btn-fermer').on('click', function () {
+                $y.confirm(
+                    'Souhaitez-vous ne plus être notifié pour cette séance ?',
+                    {
+                        title   : "Ne plus me proposer pour cette séance",
+                        buttons : {
+                            ok    : 'Ne plus me proposer',
+                            cancel: 'Fermer'
+                        },
+                        callback: function (retour) {
+
+                            if (retour) {
+
+                                // Si retour oui, on enregistre que l'apprenant ne veut plus être notifié
+                                $.ajax({
+                                    type: 'post',
+                                    url : application.url('@enregistrerNePlusMeProposer'),
+                                    data: {
+                                        codeSeance : codeSeance
+                                    },
+                                    beforeSend: function () {
+                                        application.modalePatience.start('update');
+                                    }
+                                })
+                                    .done(function () {
+                                        modal.hide();
+                                    })
+                                    .fail(function () {
+                                        $y.NotificationFactory.error('Une erreur est apparue .');
+                                    })
+                                    .always(function () {
+                                        application.modalePatience.stop();
+                                    });
+                            }
+                            else {
+                                modal.hide();
+                            }
+                        }
+                    }
+                )
+            });
+        });
+    })(application, ymag, jQuery);
+</script>
+</div>

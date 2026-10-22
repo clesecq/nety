@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html class="no-js" lang="fr">
+    <head>
+        <meta charset="Windows-1252">
+        <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+        <meta name="description" content="Portail netYParéo">
+        <meta name="author" content="YMAG">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>NetYParéo - CFAI Alsace</title>
+    <link href="/netypareo/favicon.ico?v=2" rel="shortcut icon" type="application/octet-stream">
+    <link href="/netypareo/css/styles.css?v=3.34.17" media="all" rel="stylesheet" type="text/css">
+    <link href="/netypareo/css/view/connexion.css?v=3.34.17" media="all" rel="stylesheet" type="text/css">
+    <link href="/netypareo/css\custom.css?v=3.34.17" media="all" rel="stylesheet" type="text/css">
+<style type="text/css">
+
+        .img-nobody {
+            max-height: 64px;
+        }
+
+        .top-50pct {
+            top: 50%;
+        }
+
+        html:not(.mobile) .btn-oauth-ms {
+            border: 1px solid #d3d3d3;
+            box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+            transition: all .15s ease-in-out;
+        }
+        html:not(.mobile) .btn-oauth-ms:hover {
+            box-shadow: rgba(0, 0, 0, 0.05) 0px 6px 24px 0px, rgba(0, 0, 0, 0.08) 0px 0px 0px 1px;
+        }
+
+    </style>
+        <script src="/netypareo/js/vendor/modernizr.min.js?v=3.34.17"></script>
+
+            </head>
+    <body>
+
+        <header class="page-header noprint flex-row" data-apply="PageHeaderDesktop">
+            <div class="page-header-title flex-item-fluid ellipsis">
+                CFAI Alsace                </div>
+                            </header>
+
+            <!--[if lt IE 10]>
+            <div class="content">
+                <h3>Votre version d'Internet Explorer n'est pas prise en charge par cette application.</h3>
+                Merci de mettre à jour votre navigateur.
+            </div>
+            <![endif]-->
+            <!--[if(gte IE 10)|!(IE)]><!-->
+            <noscript>
+                <main class="content">
+                    <h3>Votre navigateur n'est pas configuré pour interpréter le JavaScript.</h3>
+                    <p>NetYParéo nécessite l'activation de cette fonctionnalité. Merci d'activer JavaScript dans votre navigateur.</p>
+                </main>
+            </noscript>
+
+            <main class="content">
+                
+    <div class="form-wrapper form-wrapper-cnx margin-bottom-1lh">
+
+        
+        <div class="form-wrapper-message text-center text-error">
+                    </div>
+        
+        <div class="form-wrapper-inner">
+            <div class="section position-relative">
+                <div class="section-title margin-bottom-1lh hidden-phone">Authentification</div>
+                <form class="form flex" method="post" action="/netypareo/index.php/authentication/"
+                      autocomplete="off">
+                    <div class="flex-row flex-wrap flex-align-items-center flex-center">
+                        <img id="imageNobody" alt="img-nobody"
+                             src="/netypareo/images/icon-nobody/nobody.png"
+                             class="img-nobody" />
+
+                        <div class="width-cnx">
+                            <div class="section-content-cnx">
+
+                                <div class="text-info-mobile">
+                                    <h1>Bienvenue</h1>
+                                    <p>Veuillez-vous identifier pour accéder à
+                                        votre espace personnel.</p>
+                                </div>
+                                <input id="login" name="login" type="text" value="" class="control-group width-100pct"
+                                       placeholder="Identifiant" autocomplete="username">
+
+                                <div class="input-password-div control-group width-100pct"  data-apply="PasswordViewer"><input  id="password" class="width-100pct" placeholder="Mot de passe" autocomplete="current-password" type="password" name="password"/><i class="far fa-eye input-password-eye js-password-eye"></i></div>
+                            </div>
+
+                            <input type="hidden" name="screenWidth" id="screen-width"/>
+                            <input type="hidden" name="screenHeight" id="screen-height"/>
+                            <input type="hidden" name="token_csrf" id="token-csrf" value="login-csrf-token"/>
+                        </div>
+
+                        <div class="flex-column width-100pct">
+                            <div class="form-actions text-center">
+                                <input id="btnSeConnecter" name="btnSeConnecter" type="submit" value="Se connecter"
+                                       class="btn btn-primary margin-top-1lh" disabled="disabled">
+                                <br>
+                                <a href="/netypareo/index.php/login/identifiants-perdus-form/"
+                                   class="acces-compte text-italic">
+                                    Mot de passe oublié ?
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                <div id="submit-message" class="text-info position-absolute top-50pct width-100pct text-center hidden"></div>
+            </div>
+        </div>
+
+                    <div class="section-oauth-cnx">
+                <div class="line-separator"></div>
+
+                <div class="btn-oauth-wrapper flex-row flex-center section-content-cnx margin-top-2lh">
+                    <a href="/netypareo/index.php/authentication/oauth/"
+                       class="btn-oauth-ms flex-row flex-center flex-align-items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="21" height="21" viewBox="0 0 21 21"><title>MS-SymbolLockup</title><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+                        <span>Se connecter avec Microsoft</span>
+                    </a>
+                </div>
+            </div>
+            </div>
+
+            </main>
+
+            <footer class="noprint page-footer">
+    <div class="footer-primary clearfix">
+
+        
+            <div class="logo-centre float-left margin-right-30px">
+                <img src="/netypareo/index.php/logo/centre/?1539380460"
+                     alt="logo centre"/>
+            </div>
+
+        
+        <div class="address-centre vcard float-left clearfix">
+                            <div class="float-left margin-right-30px">
+
+                    <!-- Entête de l'adresse -->
+                    <div class="fn org">CFAI Alsace</div>
+
+                    <!-- Adresse du site de formation -->
+                    <div class="address " > 
+   <div class="street-address">31 rue François SPOERRY</div>
+   <span class="postal-code">68100 </span>
+   <span class="locality">MULHOUSE</span>
+   <div class="country-name">
+FRANCE
+   </div>
+</div>                </div>
+                            <div class="float-left margin-right-30px">
+                                    <div>
+                        <a href="/netypareo/index.php/qualite/login/">
+                            <span class="type">Enquête en ligne</span>
+                        </a>
+                    </div>
+                                </div>
+        </div>
+
+        <a href="javascript:void(0)" id="to-top" class="to-top" title="Remonter en haut de la page">
+            <span class="picto-white-to-top"></span>
+        </a>
+    </div>
+
+    <div class="footer-secondary flex-row">
+        <div class="partner-list flex-item-fluid flex-row flex-align-items-center">
+
+            
+        </div>
+        <div class="copyright">
+            <a href="javascript:void(0);" class="text-small" id="mention-legal">Mentions légales</a><br/>
+            <span class="text-small">
+              NetYParéo &copy; <a href="https://www.ymag.fr" target="_blank" class="text-color-inverted">YMAG</a> 2005-2026            </span>
+        </div>
+    </div>
+</footer>
+
+<div  id="mention-legal-modal" class="modal" data-apply="Modal" data-modal-remote="/netypareo/index.php/mentions-legales/" data-modal-max-height="400px" data-modal-width="500px">
+<div class="modal-header">
+<div class="modal-title">Mentions légales</div>
+<a href="javascript:void(0)" class="modal-close" data-dismiss="Modal"></a>
+</div>
+<div class="modal-body">
+</div>
+    <div class="modal-footer">
+    <button class="btn btn-primary" data-dismiss="Modal">Fermer</button>
+</div>
+</div>
+            <!--<![endif]-->
+
+        <script src="/netypareo/index.php/resource/js/3.34.17/vendor/?v=3.34.17" type="text/javascript" charset="windows-1252"></script>
+<script src="/netypareo/js/script.js?v=3.34.17" type="text/javascript" charset="windows-1252"></script>
+<script type="text/javascript"></script>
+<script src="/netypareo/index.php/resource/js/3.34.17/Y29ubmV4aW9u/" type="text/javascript" charset="windows-1252"></script>
+<script type="text/javascript">
+        (function (application, $, $y) {
+
+            'use strict';
+
+
+            application.onReady(function () {
+
+                $('#login, #password').on('keyup change', function () {
+
+                    $('#btnSeConnecter').prop(
+                        'disabled',
+                        $('#login').val().isEmpty() || $('#password').val().isEmpty()
+                    );
+                });
+
+                $('.acces-compte').on('click', function () {
+                    onSubmit('Merci de patienter...');
+                });
+
+                $('form').on('submit', function () {
+                    onSubmit('Connexion en cours...');
+                });
+
+                $('#screen-height').val(window.screen.height);
+                $('#screen-width').val(window.screen.width);
+
+                $y.sharedEventManager.once($y.events.PageShown.eventName, function () {
+                    $('#login').focus();
+                });
+            });
+
+
+            function onSubmit(message) {
+
+                $('.section-content-cnx, .form-actions, .img-nobody, .form-wrapper-message').addClass('invisible');
+
+                $('#submit-message')
+                    .html(message)
+                    .removeClass('hidden');
+            }
+
+        })(application, jQuery, ymag);
+    </script>
+    </body>
+</html>
