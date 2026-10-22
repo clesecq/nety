@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["questionary", "requests", "tomlkit"]
+# dependencies = ["questionary", "requests", "rich", "tomlkit"]
 # ///
 """Sign Netypareo attendance sheets (émargement) on extranet.cfai-alsace.fr."""
 
@@ -20,6 +20,8 @@ from pathlib import Path
 import questionary
 import requests
 import tomlkit
+from rich.console import Console
+from rich.text import Text
 
 APP = "nety"
 BASE = "https://extranet.cfai-alsace.fr/netypareo/index.php"
@@ -39,6 +41,8 @@ TEMPLATE = f"""\
 """
 
 VERBOSE = False
+# Progress goes to stderr; rich drops the spinner when it is not a terminal.
+CONSOLE = Console(stderr=True)
 
 
 class AuthError(Exception):
@@ -47,6 +51,10 @@ class AuthError(Exception):
 
 class ConfigError(Exception):
     pass
+
+
+def done(msg):
+    CONSOLE.print(Text.assemble(("✓ ", "green"), msg))
 
 
 def log(msg):
@@ -238,7 +246,7 @@ def submit_signature(session, code_apprenant, code_seance, token, png):
 
 
 def table_lines(items):
-    """Aligned rows (header first) built from the séance data."""
+    """Aligned rows (header first) built from the session data."""
     rows = [("Time", "Course", "Teacher", "Room", "Status")]
     rows += [(s["time"], s["course"], s["teacher"], s["room"], s["status"]) for s in items]
     widths = [max(len(r[c]) for r in rows) for c in range(len(rows[0]))]
@@ -293,20 +301,32 @@ def cmd_sign(args):
     session.headers["User-Agent"] = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
     )
-    try:
-        login(session, *credentials(cfg))
-    except AuthError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
+    user, password = credentials(cfg)
+    with CONSOLE.status(f"Logging in as {user}…") as status:
+        try:
+            login(session, user, password)
+        except AuthError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        done(f"Logged in as {user}")
 
-    items = [s for s in list_seances(session, args.date) if not s["signed"]]
-    open_code = find_open_seance(session)
-    log(f"emargement-ouvert codeSeance={open_code}")
-    if open_code and all(s["code"] != open_code for s in items):
-        items.append({"code": open_code, "course": "?", "time": "?", "start": 0,
-                      "teacher": "", "room": "", "signed": False})
+        status.update(f"Loading schedule for {args.date:%d/%m/%Y}…")
+        seances = list_seances(session, args.date)
+        items = [s for s in seances if not s["signed"]]
+        done(f"Schedule {args.date:%d/%m/%Y}: {len(seances)} session(s), "
+             f"{len(seances) - len(items)} already signed")
 
-    # The signature modal answers for any séance: only emargement-ouvert tells which is open.
+        status.update("Checking for an open attendance sheet…")
+        open_code = find_open_seance(session)
+        log(f"emargement-ouvert codeSeance={open_code}")
+        if open_code and all(s["code"] != open_code for s in items):
+            items.append({"code": open_code, "course": "?", "time": "?", "start": 0,
+                          "teacher": "", "room": "", "signed": False})
+        opened = next((s for s in items if s["code"] == open_code), None)
+        done(f"Open attendance sheet: {opened['time']} {opened['course']}" if opened
+             else "Open attendance sheet: none")
+
+    # The signature modal answers for any session: only emargement-ouvert tells which is open.
     for s in items:
         s["status"] = "open" if s["code"] == open_code else "not open"
 
@@ -315,7 +335,7 @@ def cmd_sign(args):
         return 0
     if not any(s["status"] == "open" for s in items):
         print_table(items)
-        print("No open émargement.")
+        print("No open attendance sheet.")
         return 0
 
     if args.all:
@@ -328,24 +348,27 @@ def cmd_sign(args):
         return 0
 
     failed = False
-    for s in chosen:
-        label = f"{s['time']} {s['course']}"
-        if args.dry_run:
-            print(f"[dry-run] would sign {label} (codeSeance={s['code']})")
-            continue
-        # The CSRF token belongs to one modal opening: fetch a fresh one per signature.
-        form = get_signature_form(session, s["code"])
-        if not form:
-            print(f"FAILED {label}: no longer open", file=sys.stderr)
-            failed = True
-            continue
-        try:
-            ts = submit_signature(session, form[0], s["code"], form[1], png)
-        except (requests.RequestException, RuntimeError) as e:
-            print(f"FAILED {label}: {e}", file=sys.stderr)
-            failed = True
-            continue
-        print(f"Signed {label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
+    with CONSOLE.status("Signing…") as status:
+        for s in chosen:
+            label = f"{s['time']} {s['course']}"
+            if args.dry_run:
+                print(f"[dry-run] would sign {label} (codeSeance={s['code']})")
+                continue
+            # The CSRF token belongs to one modal opening: fetch a fresh one per signature.
+            status.update(f"{label}: opening signature form…")
+            form = get_signature_form(session, s["code"])
+            if not form:
+                print(f"FAILED {label}: no longer open", file=sys.stderr)
+                failed = True
+                continue
+            status.update(f"{label}: sending signature…")
+            try:
+                ts = submit_signature(session, form[0], s["code"], form[1], png)
+            except (requests.RequestException, RuntimeError) as e:
+                print(f"FAILED {label}: {e}", file=sys.stderr)
+                failed = True
+                continue
+            print(f"Signed {label} at {dt.datetime.fromtimestamp(ts):%H:%M:%S}")
     return 1 if failed else 0
 
 
