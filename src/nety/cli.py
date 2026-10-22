@@ -1,9 +1,10 @@
-"""Command line: sign, settings and signature commands."""
+"""Command line: sign, watch, settings and signature commands."""
 
 import argparse
 import datetime as dt
 import json
 import logging
+import math
 import os
 import shlex
 import subprocess
@@ -16,7 +17,7 @@ import requests
 import tomlkit
 
 from . import __doc__ as DESCRIPTION
-from .client import AuthError, Lesson, Netypareo
+from .client import AuthError, Lesson, Netypareo, SessionExpired
 from .config import (KEYS, TEMPLATE, ConfigError, config_problems, load_config, partner,
                      read_doc, read_png, resolve, signature_path, target_config_path, write_doc)
 from .draw import draw_signature
@@ -25,9 +26,16 @@ from .selfcheck import selfcheck
 from .secrets import (credentials, keyring_available, keyring_delete, keyring_get, keyring_set,
                       login_hint)
 from .files import write_private
-from .ui import CONSOLE, ask_password, done, print_lessons, select_lessons
+from .ui import CONSOLE, ask_password, done, keys_enabled, print_lessons, select_lessons, wait_key
+from .watch import pick_lesson, wait_seconds, window
 
 log = logging.getLogger(__name__).debug
+# Module-level so tests can run `watch` on a fake clock.
+now = dt.datetime.now
+# Returns True when a key cut the wait short.
+sleep = wait_key
+# Fewest seconds between two checks, however fast keys are pressed.
+MIN_GAP = 10
 
 
 def authenticate(client, cfg):
@@ -38,8 +46,13 @@ def authenticate(client, cfg):
     if user:
         done(f"Reused saved session for {user}")
         return user
+    return log_in(client, cfg, hint)
+
+
+def log_in(client, cfg, hint=None):
+    """Log in with fresh credentials and cache the cookies. Returns the login."""
     # Prompts, if any, must run outside the spinner.
-    user, password, source = credentials(cfg, hint)
+    user, password, source = credentials(cfg, hint or login_hint(cfg))
     with CONSOLE.status(f"Logging in as {user}…"):
         try:
             client.login(user, password)
@@ -174,6 +187,123 @@ def cmd_sign(args):
     # The server may have refreshed the cookies while we worked.
     client.save_cookies(user)
     return 1 if failed else 0
+
+
+def cmd_watch(args):
+    cfg, cfg_path = load_config(args.config)
+    png = None if args.dry_run else load_signature(args, cfg, cfg_path)
+    client = Netypareo()
+    today = now().date()
+
+    # A cron or systemd start may run before the network is up: retry until it is.
+    while True:
+        try:
+            authenticate(client, cfg)
+            with CONSOLE.status(f"Loading schedule for {today:%d/%m/%Y}…"):
+                lessons = client.lessons(today)
+            break
+        except (requests.RequestException, SessionExpired) as e:
+            if now().date() != today:
+                raise
+            print(f"Network error, retrying in {args.interval} s: {e}", file=sys.stderr)
+            sleep(args.interval)
+    lesson = pick_lesson(lessons, now())
+    if not lesson:
+        print("Nothing left to watch today.")
+        return 0
+    start, end = window(lesson, today, args.buffer)
+    others = {other.code: other for other in lessons if not other.signed and other.code != lesson.code}
+
+    key = ", press a key to check now" if keys_enabled() else ""
+    if now() < start:
+        print(f"Waiting until {start:%H:%M} for {lesson.label}")
+        with CONSOLE.status(f"Waiting until {start:%H:%M} for {lesson.label}{key}…"):
+            while (t := now()) < start:
+                if sleep(wait_seconds(t, start, args.interval)):
+                    break
+    done(f"Watching {lesson.label} until {end:%H:%M}, checking every {args.interval} s")
+
+    warned, failed = set(), False
+    while True:
+        last_check = now()
+        try:
+            result = check_and_sign(client, cfg, lesson, today, png, args.dry_run)
+        except (requests.RequestException, AuthError, SessionExpired) as e:
+            # Transient: the server may answer again before the lesson ends.
+            kind = "Network" if isinstance(e, requests.RequestException) else "Login"
+            print(f"{kind} error, retrying: {e}", file=sys.stderr)
+            result = None
+        if result in ("signed", "already signed"):
+            if result == "already signed":
+                done(f"{lesson.label} is already signed")
+            client.save_cookies(client.user)
+            return 0
+        if result == "failed":
+            failed = True
+            print("Signing failed, retrying at the next check.", file=sys.stderr)
+        if result in others and result not in warned:
+            print(f"Open attendance sheet: {others[result].label}, not the one watched: "
+                  f"run `{APP} sign` to sign it.")
+            warned.add(result)
+
+        t = now()
+        if t >= end:
+            break
+        pause = wait_seconds(t, end, args.interval)
+        next_check = t + dt.timedelta(seconds=pause)
+        with CONSOLE.status(f"Waiting for the sheet of {lesson.label}, "
+                            f"next check {next_check:%H:%M:%S}{key}…") as status:
+            if sleep(pause):
+                # A key asks for a check now, but no more than one every MIN_GAP seconds:
+                # count down so the key press visibly did something.
+                while (gap := MIN_GAP - (now() - last_check).total_seconds()) > 0:
+                    status.update(f"Checking again in {math.ceil(gap)} s "
+                                  f"(at most one check every {MIN_GAP} s)…")
+                    sleep(min(1, gap))
+
+    client.save_cookies(client.user)
+    if failed:
+        print(f"{lesson.label} ended before a signature went through.", file=sys.stderr)
+        return 1
+    print(f"{lesson.label} ended without an open attendance sheet.")
+    return 3
+
+
+def check_and_sign(client, cfg, lesson, day, png, dry_run):
+    """One check of the watched lesson.
+
+    Returns "signed", "already signed", "failed", the code of another open sheet, or None."""
+    try:
+        with CONSOLE.status(f"Checking the attendance sheet of {lesson.label}…"):
+            code = client.open_lesson_code()
+    except SessionExpired as e:
+        log(f"session expired: {e}")
+        print("Session expired, logging in again.")
+        client.http.cookies.clear()
+        log_in(client, cfg)
+        code = client.open_lesson_code()
+    log(f"emargement-ouvert codeSeance={code}")
+    if code != lesson.code:
+        return code
+    done(f"Open attendance sheet: {lesson.label}")
+    # It may have been signed meanwhile (in the browser, or by an attempt that timed out).
+    if any(other.code == lesson.code and other.signed for other in client.lessons(day)):
+        return "already signed"
+    return "failed" if sign_lessons(client, [lesson], png, dry_run) else "signed"
+
+
+def interval(value):
+    seconds = int(value)
+    if seconds < 30:
+        raise argparse.ArgumentTypeError("at least 30 seconds")
+    return seconds
+
+
+def minutes(value):
+    count = int(value)
+    if count < 0:
+        raise argparse.ArgumentTypeError("cannot be negative")
+    return count
 
 
 def cmd_settings_path(args):
@@ -418,6 +548,16 @@ def build_parser():
     ps.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
     ps.set_defaults(func=cmd_sign)
 
+    pw = sub.add_parser("watch", parents=[common],
+                        help="wait for the current lesson's attendance sheet and sign it")
+    pw.add_argument("--buffer", type=minutes, default=45, metavar="MIN",
+                    help="start watching MIN minutes before the listed start (default 45)")
+    pw.add_argument("--interval", type=interval, default=120, metavar="SEC",
+                    help="seconds between checks, at least 30 (default 120)")
+    pw.add_argument("--signature", type=Path, help="PNG signature image")
+    pw.add_argument("--dry-run", action="store_true", help="watch, but do not sign")
+    pw.set_defaults(func=cmd_watch)
+
     pc = sub.add_parser("settings", parents=[common], help="create, show or change the config file")
     pc.set_defaults(func=lambda _args: pc.print_help() or 2)
     actions = pc.add_subparsers(title="actions", metavar="<action>")
@@ -477,6 +617,9 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         if e.hint:
             print(e.hint, file=sys.stderr)
+        return 2
+    except SessionExpired as e:
+        print(f"Error: the session expired ({e}). Run the command again.", file=sys.stderr)
         return 2
 
 
