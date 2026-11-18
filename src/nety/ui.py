@@ -31,27 +31,36 @@ def ask_password():
         "Password:", validate=lambda v: bool(v) or "Enter a password").unsafe_ask()
 
 
-def select_lessons(lessons):
-    """Ask which open sheets to sign. Returns the chosen lessons."""
-    open_lessons = [lesson for lesson in lessons if lesson.is_open]
+def select_lessons(candidates):
+    """Ask which of the signable lessons to sign. Returns the chosen lessons."""
+    alone = sum(lesson.is_open for lesson in candidates) == 1
     choices = [
-        questionary.Choice(f"{lesson.time}  {lesson.course}", value=lesson,
-                           checked=len(open_lessons) == 1)
-        for lesson in open_lessons
+        questionary.Choice(lesson.label, value=lesson, checked=lesson.is_open and alone)
+        for lesson in candidates
     ]
     return questionary.checkbox("Sign which?", choices=choices).unsafe_ask() or []
 
 
-def print_lessons(lessons, date):
-    table = Table(title=f"Sessions on {date:%d/%m/%Y}", box=box.ROUNDED, header_style="bold")
-    for column in ("Time", "Course", "Teacher", "Room", "Status"):
-        table.add_column(column, no_wrap=column in ("Time", "Status"))
+def status(lesson):
+    if lesson.is_open:
+        return "open"
+    return "unsigned (past)" if lesson.past else "not open"
+
+
+def print_lessons(lessons, title):
+    table = Table(title=title, box=box.ROUNDED, header_style="bold")
+    dated = any(lesson.past for lesson in lessons)
+    columns = (("Date",) if dated else ()) + ("Time", "Course", "Teacher", "Room", "Status")
+    for column in columns:
+        table.add_column(column, no_wrap=column in ("Date", "Time", "Status"))
     for lesson in lessons:
-        status = "open" if lesson.is_open else "not open"
+        cells = ((f"{lesson.day:%d/%m}" if lesson.day else "?",) if dated else ()) + (
+            lesson.time, lesson.course, lesson.teacher, lesson.room)
         # Text() keeps server strings such as "[bold]" from being read as markup.
-        table.add_row(*map(Text, (lesson.time, lesson.course, lesson.teacher, lesson.room)),
-                      Text(status, style="bold green" if lesson.is_open else "dim"),
-                      style=None if lesson.is_open else "dim")
+        table.add_row(*map(Text, cells),
+                      Text(status(lesson), style="bold green" if lesson.is_open
+                           else "yellow" if lesson.past else "dim"),
+                      style=None if lesson.signable else "dim")
     Console().print(table)
 
 
