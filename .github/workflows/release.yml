@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
           # Full history, to check the tag is on main.
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
           # Same version the binaries embed (setup-python in the build job).
@@ -78,7 +78,7 @@ jobs:
         with:
           python-version: "3.13"
       # No cache: a cache written by another ref could poison the release build.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
       # No dev group: pytest would otherwise end up in the binary.
