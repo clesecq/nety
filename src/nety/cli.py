@@ -208,6 +208,8 @@ def cmd_watch(args):
                 raise
             print(f"Network error, retrying in {args.interval} s: {e}", file=sys.stderr)
             sleep(args.interval)
+    if args.any:
+        return watch_any(client, cfg, today, png, args)
     lesson = pick_lesson(lessons, now())
     if not lesson:
         print("Nothing left to watch today.")
@@ -250,17 +252,7 @@ def cmd_watch(args):
         t = now()
         if t >= end:
             break
-        pause = wait_seconds(t, end, args.interval)
-        next_check = t + dt.timedelta(seconds=pause)
-        with CONSOLE.status(f"Waiting for the sheet of {lesson.label}, "
-                            f"next check {next_check:%H:%M:%S}{key}…") as status:
-            if sleep(pause):
-                # A key asks for a check now, but no more than one every MIN_GAP seconds:
-                # count down so the key press visibly did something.
-                while (gap := MIN_GAP - (now() - last_check).total_seconds()) > 0:
-                    status.update(f"Checking again in {math.ceil(gap)} s "
-                                  f"(at most one check every {MIN_GAP} s)…")
-                    sleep(min(1, gap))
+        wait_next_check(f"the sheet of {lesson.label}", t, end, last_check, args.interval, key)
 
     client.save_cookies(client.user)
     if failed:
@@ -270,19 +262,87 @@ def cmd_watch(args):
     return 3
 
 
-def check_and_sign(client, cfg, lesson, day, png, dry_run):
-    """One check of the watched lesson.
+def wait_next_check(what, t, until, last_check, every, key):
+    """Sleep until the next check (at most `until`); a key press cuts the wait short."""
+    pause = wait_seconds(t, until, every)
+    next_check = t + dt.timedelta(seconds=pause)
+    with CONSOLE.status(f"Waiting for {what}, next check {next_check:%H:%M:%S}{key}…") as status:
+        if sleep(pause):
+            # A key asks for a check now, but no more than one every MIN_GAP seconds:
+            # count down so the key press visibly did something.
+            while (gap := MIN_GAP - (now() - last_check).total_seconds()) > 0:
+                status.update(f"Checking again in {math.ceil(gap)} s "
+                              f"(at most one check every {MIN_GAP} s)…")
+                sleep(min(1, gap))
 
-    Returns "signed", "already signed", "failed", the code of another open sheet, or None."""
+
+def open_code(client, cfg):
+    """Code of the open sheet, logging in again if the session expired."""
     try:
-        with CONSOLE.status(f"Checking the attendance sheet of {lesson.label}…"):
-            code = client.open_lesson_code()
+        return client.open_lesson_code()
     except SessionExpired as e:
         log(f"session expired: {e}")
         print("Session expired, logging in again.")
         client.http.cookies.clear()
         log_in(client, cfg)
-        code = client.open_lesson_code()
+        return client.open_lesson_code()
+
+
+def watch_any(client, cfg, today, png, args):
+    """Sign every sheet that opens, whichever lesson, until midnight."""
+    until = dt.datetime.combine(today + dt.timedelta(days=1), dt.time())
+    key = ", press a key to check now" if keys_enabled() else ""
+    done(f"Watching for any open attendance sheet until midnight, checking every {args.interval} s")
+    handled, signed, failed = set(), False, False
+    while True:
+        last_check = now()
+        try:
+            with CONSOLE.status("Checking for an open attendance sheet…"):
+                code = open_code(client, cfg)
+            if code is not None and code not in handled:
+                outcome = sign_open_sheet(client, code, today, png, args.dry_run)
+                if outcome != "failed":
+                    handled.add(code)
+                    signed = signed or outcome == "signed"
+                else:
+                    failed = True
+                    print("Signing failed, retrying at the next check.", file=sys.stderr)
+        except (requests.RequestException, AuthError, SessionExpired) as e:
+            kind = "Network" if isinstance(e, requests.RequestException) else "Login"
+            print(f"{kind} error, retrying: {e}", file=sys.stderr)
+        t = now()
+        if t >= until:
+            break
+        wait_next_check("an open attendance sheet", t, until, last_check, args.interval, key)
+
+    client.save_cookies(client.user)
+    if signed:
+        return 0
+    if failed:
+        print("No signature went through before midnight.", file=sys.stderr)
+        return 1
+    print("No attendance sheet opened today.")
+    return 3
+
+
+def sign_open_sheet(client, code, today, png, dry_run):
+    """Name and sign the open sheet. Returns "signed", "already signed" or "failed"."""
+    lesson = next((x for x in client.lessons(today) if x.code == code), None)
+    if lesson and lesson.signed:
+        done(f"{lesson.label} is already signed")
+        return "already signed"
+    # Not in today's schedule: probably an earlier day's lesson. Name it.
+    lesson = lesson or client.seance(code) or Lesson(code)
+    done(f"Open attendance sheet: {lesson.label}")
+    return "failed" if sign_lessons(client, [lesson], png, dry_run) else "signed"
+
+
+def check_and_sign(client, cfg, lesson, day, png, dry_run):
+    """One check of the watched lesson.
+
+    Returns "signed", "already signed", "failed", the code of another open sheet, or None."""
+    with CONSOLE.status(f"Checking the attendance sheet of {lesson.label}…"):
+        code = open_code(client, cfg)
     log(f"emargement-ouvert codeSeance={code}")
     if code != lesson.code:
         return code
@@ -552,8 +612,11 @@ def build_parser():
 
     pw = sub.add_parser("watch", parents=[common],
                         help="wait for the current lesson's attendance sheet and sign it")
-    pw.add_argument("--buffer", type=minutes, default=45, metavar="MIN",
-                    help="start watching MIN minutes before the listed start (default 45)")
+    mode = pw.add_mutually_exclusive_group()
+    mode.add_argument("--buffer", type=minutes, default=45, metavar="MIN",
+                      help="start watching MIN minutes before the listed start (default 45)")
+    mode.add_argument("--any", action="store_true",
+                      help="ignore the schedule: sign every sheet that opens until midnight")
     pw.add_argument("--interval", type=interval, default=120, metavar="SEC",
                     help="seconds between checks, at least 30 (default 120)")
     pw.add_argument("--signature", type=Path, help="PNG signature image")
@@ -619,6 +682,7 @@ def ask_set(unset=False):
 MAIN_MENU = [
     ("Sign attendance sheets", ["sign"]),
     ("Watch the current lesson", ["watch"]),
+    ("Watch for any open sheet", ["watch", "--any"]),
     ("Settings", None),
     ("Draw a signature", ["signature", "draw"]),
     ("Quit", None),

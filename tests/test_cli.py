@@ -441,6 +441,11 @@ class WatchClient:
         self.submitted.append(code)
         return 1_760_882_400
 
+    seances = {}
+
+    def seance(self, code):
+        return self.seances.get(code)
+
     def save_cookies(self, user):
         pass
 
@@ -468,7 +473,8 @@ def watch_env(monkeypatch, cfg_file, tmp_path):
 
     def run(fake, **kw):
         monkeypatch.setattr(cli, "Netypareo", lambda: fake)
-        base = dict(config=cfg_file, signature=sig, buffer=45, interval=120, dry_run=False)
+        base = dict(config=cfg_file, signature=sig, buffer=45, interval=120, dry_run=False,
+                    any=False)
         return cli.cmd_watch(argparse.Namespace(**{**base, **kw}))
 
     run.clock, run.logins = clock, logins
@@ -615,3 +621,46 @@ def test_version_matches_pyproject(monkeypatch, capsys):
     pyproject = Path(__file__).parent.parent / "pyproject.toml"
     version = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
     assert capsys.readouterr().out.split()[-1] == version
+
+
+OTHER_DAY = Lesson(77, "Droit", start=8 * 60, end=12 * 60, day=dt.date(2026, 10, 16))
+
+
+def test_watch_any_signs_sheets_until_midnight(watch_env, capsys):
+    fake = WatchClient([WATCHED], [None, 77, 77, 4819992, 4819992])
+    fake.seances = {77: OTHER_DAY}
+    assert watch_env(fake, any=True) == 0
+    assert fake.submitted == [77, 4819992]
+    assert watch_env.clock["t"] >= dt.datetime(2026, 10, 20)
+    err = capsys.readouterr().err
+    assert "Open attendance sheet: 16/10 08h00-12h00 Droit" in err
+    assert "Open attendance sheet: 14h00-18h00 Info" in err
+
+
+def test_watch_any_nothing_opens(watch_env, capsys):
+    assert watch_env(WatchClient([WATCHED], []), any=True) == 3
+    assert "No attendance sheet opened today." in capsys.readouterr().out
+
+
+def test_watch_any_skips_signed_sheet(watch_env):
+    fake = WatchClient([SIGNED], [4819992])
+    assert watch_env(fake, any=True) == 3
+    assert fake.submitted == []
+
+
+def test_watch_any_failure_is_retried(watch_env):
+    fake = WatchClient([WATCHED], [4819992, 4819992], fail_forms=1)
+    assert watch_env(fake, any=True) == 0
+    assert fake.submitted == [4819992]
+
+
+def test_watch_any_dry_run(watch_env, capsys):
+    fake = WatchClient([WATCHED], [4819992])
+    assert watch_env(fake, any=True, dry_run=True) == 0
+    assert fake.submitted == []
+    assert capsys.readouterr().out.count("[dry-run] would sign") == 1
+
+
+def test_watch_any_rejects_buffer():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["watch", "--any", "--buffer", "10"])

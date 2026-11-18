@@ -124,9 +124,12 @@ nety watch                 # wait for the current (or next) session's sheet, sig
 nety watch --buffer 60     # start watching 60 minutes before the listed start
 nety watch --interval 300  # check every 5 minutes
 nety watch --dry-run       # watch, but do not sign
+nety watch --any           # ignore the schedule: sign every sheet that opens until midnight
 ```
 
-`watch` picks the earliest unsigned session of the day that has not ended. Sessions usually start about 30 minutes before the time the schedule lists, so it starts checking 45 minutes before (`--buffer`). Until then it sleeps. It checks every 120 seconds (`--interval`, at least 30) until the session ends, and signs as soon as the sheet opens. Press any key (Enter, Space…) to check right away, for example when the teacher announces the sheet. Before the window opens, a key starts checking early. Checks are at least 10 seconds apart: a key pressed sooner shows a countdown to the next check. It logs in again if the session expires. Network errors (at startup too, for example when cron runs it before the network is up), failed logins and failed signatures are retried at the next check until the session ends. If you signed in the browser meanwhile, it notices and does not sign again.
+`watch` picks the earliest unsigned session of the day that has not ended. Sessions usually start about 30 minutes before the time the schedule lists, so it starts checking 45 minutes before (`--buffer`). Until then it sleeps. It checks every 120 seconds (`--interval`, at least 30) until the session ends, and signs as soon as the sheet opens. `--any` skips the lesson choice and the `--buffer` window (the two cannot be combined). It checks every `--interval` seconds, signs each sheet that opens (even one that belongs to another day, named from the server), keeps waiting after a signature, and stops at midnight: exit `0` if it signed something, `1` if a signature never went through, `3` if no sheet opened.
+
+Press any key (Enter, Space…) to check right away, for example when the teacher announces the sheet. Before the window opens, a key starts checking early. Checks are at least 10 seconds apart: a key pressed sooner shows a countdown to the next check. It logs in again if the session expires. Network errors (at startup too, for example when cron runs it before the network is up), failed logins and failed signatures are retried at the next check until the session ends. If you signed in the browser meanwhile, it notices and does not sign again.
 
 To run it unattended (cron, systemd timer, tmux, or `nety watch &`), store the password in the keyring, `password_command` or `NETYPAREO_PASSWORD`. A re-login cannot prompt when no one is at the terminal.
 
