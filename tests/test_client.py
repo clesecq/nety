@@ -27,14 +27,6 @@ def test_lessons_parse_planning(nety, requests_mock):
     assert lessons[0].course == "Informatique et Bureautique"
     assert lessons[0].teacher == "M. TEACHERA, M. TEACHERB"
     assert lessons[0].room == "E-011"
-    assert lessons[0].day == DAY
-
-
-def test_past_lesson_label_names_the_day():
-    lesson = Lesson(42, course="Maths", start=480, end=540, day=DAY)
-    assert lesson.label == "08h00-09h00 Maths"
-    lesson.past = True
-    assert lesson.label == "19/10 08h00-09h00 Maths"
 
 
 def test_unknown_lesson_label():

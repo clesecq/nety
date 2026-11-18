@@ -1,7 +1,6 @@
 """HTTP calls to the Netypareo extranet."""
 
 import base64
-import datetime as dt
 import json
 import logging
 import re
@@ -54,14 +53,6 @@ class Lesson:
     room: str = ""
     signed: bool = False
     is_open: bool = False
-    day: dt.date | None = None
-    # A day before the one asked for: nety cannot tell whether its sheet is still open.
-    past: bool = False
-
-    @property
-    def signable(self):
-        """Open now, or from a past day (whose sheet nety cannot check)."""
-        return self.is_open or self.past
 
     @property
     def time(self):
@@ -71,9 +62,7 @@ class Lesson:
 
     @property
     def label(self):
-        # Past lessons span several days: name the day.
-        prefix = f"{self.day:%d/%m} " if self.past and self.day else ""
-        return f"{prefix}{self.time} {self.course}"
+        return f"{self.time} {self.course}"
 
 
 class Netypareo:
@@ -169,7 +158,6 @@ class Netypareo:
                         teacher=detail[0] if len(detail) > 0 else "",
                         room=detail[1] if len(detail) > 1 else "",
                         signed=any(SIGNED_ICON in i.get("classe", "") for i in s.get("icones", [])),
-                        day=date,
                     ))
         return sorted(lessons, key=lambda lesson: lesson.start)
 

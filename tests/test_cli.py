@@ -214,7 +214,7 @@ def mock_extranet(requests_mock):
 
 def sign_args(cfg_file, sig, **kw):
     base = dict(config=cfg_file, signature=sig, date=dt.date(2026, 10, 19), all=True,
-                dry_run=False, since=None)
+                dry_run=False)
     return argparse.Namespace(**{**base, **kw})
 
 
@@ -244,117 +244,6 @@ def test_sign_nothing_open(cfg_file, requests_mock, capsys):
     requests_mock.post(re.compile(r".*/has-emargement/"), json={"hasEmargement": False})
     assert cli.cmd_sign(sign_args(cfg_file, None, dry_run=True)) == 0
     assert "No open attendance sheet." in capsys.readouterr().out
-
-
-def mock_past_day(requests_mock):
-    """16/10/2026 (Friday): one unsigned lesson (code 4819900) besides the fixture's day."""
-    past = fixture("planning_day.json").replace("4819992", "4819900")
-    return requests_mock.get(re.compile(r".*/planning/jour/ajax/16/10/2026"), text=past)
-
-
-def test_sign_since_lists_past_days(cfg_file, requests_mock, capsys):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    submit = mock_extranet(requests_mock)
-    past = mock_past_day(requests_mock)
-    args = sign_args(cfg_file, None, dry_run=True, since=dt.date(2026, 10, 16))
-    assert cli.cmd_sign(args) == 0
-    out = capsys.readouterr().out
-    assert past.call_count == 1
-    assert "[dry-run] would sign 16/10 14h00-18h00 Informatique et Bureautique" in out
-    assert "[dry-run] would sign 14h00-18h00 Informatique et Bureautique" in out
-    assert "unsigned (past)" in out
-    assert not submit.called
-
-
-def test_sign_since_all_submits_past(cfg_file, tmp_path, requests_mock):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    sig = tmp_path / "sig.png"
-    sig.write_bytes(PNG)
-    submit = mock_extranet(requests_mock)
-    mock_past_day(requests_mock)
-    assert cli.cmd_sign(sign_args(cfg_file, sig, since=dt.date(2026, 10, 16))) == 0
-    codes = [r.text for r in submit.request_history]
-    assert submit.call_count == 2
-    assert "codeSeance=4819900" in codes[0] and "codeSeance=4819992" in codes[1]
-
-
-def test_sign_since_without_open_sheet_offers_past(cfg_file, requests_mock, answers, capsys):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    mock_extranet(requests_mock)
-    mock_past_day(requests_mock)
-    requests_mock.post(re.compile(r".*/has-emargement/"), json={"hasEmargement": False})
-    answers.queue.append([])
-    args = sign_args(cfg_file, None, dry_run=True, all=False, since=dt.date(2026, 10, 16))
-    assert cli.cmd_sign(args) == 0
-    assert "Nothing selected." in capsys.readouterr().out
-
-
-def test_sign_since_defaults_to_a_week(cfg_file, requests_mock):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    mock_extranet(requests_mock)
-    planning = requests_mock.get(re.compile(r".*/planning/jour/ajax/"),
-                                 text=fixture("planning_day.json"))
-    cli.cmd_sign(sign_args(cfg_file, None, dry_run=True, since=True))
-    # 12-16/10 are weekdays, 17-18/10 a weekend, plus the day itself.
-    assert planning.call_count == 5 + 1
-    assert "12/10/2026" in planning.request_history[0].url
-
-
-def test_open_past_lesson_already_signed_stays_signed():
-    past = Lesson(1, signed=True)
-    client_ = PerDayClient({dt.date(2026, 10, 16): [past], dt.date(2026, 10, 19): [Lesson(2)]}, 1)
-    unsigned = cli.unsigned_lessons(client_, dt.date(2026, 10, 19), dt.date(2026, 10, 16))
-    assert unsigned == [Lesson(2)] and past.is_open
-
-
-def test_past_lessons_skip_weekend(requests_mock):
-    planning = requests_mock.get(re.compile(r".*/planning/jour/ajax/"),
-                                 text=fixture("planning_day.json"))
-    cli.past_lessons(client.Netypareo(), dt.date(2026, 10, 16), dt.date(2026, 10, 19))
-    assert planning.call_count == 1  # Fri only: Sat and Sun skipped
-
-
-def test_sign_since_after_date_does_not_offer_to_draw(cfg_file, answers):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    with pytest.raises(config.ConfigError, match="after --date"):
-        cli.cmd_sign(sign_args(cfg_file, None, since=dt.date(2026, 10, 20)))
-
-
-def test_sign_since_after_date_errors(cfg_file):
-    cfg_file.write_text('login = "040-1"\npassword = "pw"\n')
-    with pytest.raises(config.ConfigError, match="after --date"):
-        cli.cmd_sign(sign_args(cfg_file, None, dry_run=True, since=dt.date(2026, 10, 20)))
-
-
-def test_parser_since_without_value():
-    args = cli.build_parser().parse_args(["sign", "--since"])
-    assert args.since is True
-    args = cli.build_parser().parse_args(["sign", "--since", "01/10/2026"])
-    assert args.since == dt.date(2026, 10, 1)
-
-
-def test_menu_runs_sign_past(monkeypatch, answers):
-    seen = []
-    monkeypatch.setattr(cli, "cmd_sign", lambda args: seen.append(args) or 0)
-    answers.queue.append("Sign past attendance sheets")
-    assert menu_main(monkeypatch, True) == 0
-    assert seen[0].since is True
-
-
-def test_select_offers_past_unchecked(monkeypatch):
-    seen = {}
-
-    def checkbox(message, choices, **kw):
-        seen["choices"] = choices
-        raise KeyboardInterrupt
-    monkeypatch.setattr(questionary, "checkbox", checkbox)
-    lessons = [Lesson(1, past=True, day=dt.date(2026, 10, 16)), Lesson(2, is_open=True), Lesson(3)]
-    with pytest.raises(KeyboardInterrupt):
-        ui.select_lessons([lesson for lesson in lessons if lesson.signable])
-    choices = seen["choices"]
-    assert [c.value.code for c in choices] == [1, 2]
-    assert [c.checked for c in choices] == [False, True]
-    assert choices[0].title.startswith("16/10 ")
 
 
 def test_select_ctrl_c_propagates(answers):
@@ -412,18 +301,10 @@ def test_open_lesson_already_signed_is_not_listed():
     assert cli.unsigned_lessons(FakeClient(lessons, 1), dt.date(2026, 10, 19)) == [Lesson(2)]
 
 
-class PerDayClient(FakeClient):
-    def __init__(self, days, open_code):
-        self._days, self._open_code = days, open_code
-
-    def lessons(self, date):
-        return self._days.get(date, [])
-
-
-def test_open_lesson_listed_twice_flags_both_but_lists_once():
+def test_open_lesson_listed_twice_flags_both():
     lessons = [Lesson(1), Lesson(1)]
     unsigned = cli.unsigned_lessons(FakeClient(lessons, 1), dt.date(2026, 10, 19))
-    assert len(unsigned) == 1 and all(lesson.is_open for lesson in lessons)
+    assert [lesson.is_open for lesson in unsigned] == [True, True]
 
 
 def test_edit_missing_editor(tmp_path, monkeypatch):

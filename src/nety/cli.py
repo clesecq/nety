@@ -36,8 +36,6 @@ now = dt.datetime.now
 sleep = wait_key
 # Fewest seconds between two checks, however fast keys are pressed.
 MIN_GAP = 10
-# Days `sign --since` looks back when given no date.
-SINCE_DAYS = 7
 
 
 def authenticate(client, cfg):
@@ -72,49 +70,22 @@ def log_in(client, cfg, hint=None):
     return user
 
 
-def past_lessons(client, since, date):
-    """Lessons from `since` to the day before `date`, flagged as past. Signed ones are kept."""
-    found = {}
-    current = since
-    with CONSOLE.status("Loading past schedules…") as status:
-        while current < date:
-            # No lessons on weekends: skip the request.
-            if current.weekday() < 5:
-                status.update(f"Loading schedule for {current:%d/%m/%Y}…")
-                for lesson in client.lessons(current):
-                    # A lesson may be listed twice (one entry per resource): keep one copy.
-                    if lesson.code not in found:
-                        lesson.past = True
-                        found[lesson.code] = lesson
-            current += dt.timedelta(days=1)
-    unsigned = sum(not lesson.signed for lesson in found.values())
-    done(f"Schedules {since:%d/%m/%Y} to {date - dt.timedelta(days=1):%d/%m/%Y}: "
-         f"{unsigned} unsigned session(s)")
-    return list(found.values())
-
-
-def unsigned_lessons(client, date, since=None):
-    """The day's unsigned lessons, with the one open for signing flagged.
-
-    With `since`, unsigned lessons of the days from `since` come first, flagged as past."""
-    past = past_lessons(client, since, date) if since and since < date else []
+def unsigned_lessons(client, date):
+    """The day's unsigned lessons, with the one open for signing flagged."""
     with CONSOLE.status(f"Loading schedule for {date:%d/%m/%Y}…") as status:
         lessons = client.lessons(date)
-        # One entry per code: a lesson may be listed twice (one entry per resource).
-        today = list({lesson.code: lesson for lesson in lessons if not lesson.signed}.values())
-        unsigned = [lesson for lesson in past if not lesson.signed] + today
+        unsigned = [lesson for lesson in lessons if not lesson.signed]
         done(f"Schedule {date:%d/%m/%Y}: {len(lessons)} session(s), "
-             f"{sum(lesson.signed for lesson in lessons)} already signed")
+             f"{len(lessons) - len(unsigned)} already signed")
 
         status.update("Checking for an open attendance sheet…")
         # The signature modal answers for any lesson: only emargement-ouvert tells which is open.
         open_code = client.open_lesson_code()
         log(f"emargement-ouvert codeSeance={open_code}")
         # A lesson may be listed twice (one entry per resource): flag every copy.
-        # The open sheet may belong to a past day, signed or not.
-        opened = [lesson for lesson in lessons + past if lesson.code == open_code]
+        opened = [lesson for lesson in lessons if lesson.code == open_code]
         if open_code and not opened:
-            opened = [Lesson(open_code, day=date)]
+            opened = [Lesson(open_code)]
             unsigned.append(opened[0])
         for lesson in opened:
             lesson.is_open = True
@@ -195,29 +166,20 @@ def load_signature(args, cfg, cfg_path):
 
 def cmd_sign(args):
     cfg, cfg_path = load_config(args.config)
-    since = args.since
-    if since is True:
-        since = args.date - dt.timedelta(days=SINCE_DAYS)
-    # Check the arguments before offering to draw a signature.
-    if since and since > args.date:
-        raise ConfigError(f"--since {since:%d/%m/%Y} is after --date {args.date:%d/%m/%Y}")
     png = None if args.dry_run else load_signature(args, cfg, cfg_path)
 
     client = Netypareo()
     user = authenticate(client, cfg)
-    lessons = unsigned_lessons(client, args.date, since)
-    period = (f"{since:%d/%m/%Y} to {args.date:%d/%m/%Y}" if since and since < args.date
-              else f"{args.date:%d/%m/%Y}")
+    lessons = unsigned_lessons(client, args.date)
     if not lessons:
-        print(f"Nothing left to sign on {period}.")
+        print(f"Nothing left to sign on {args.date:%d/%m/%Y}.")
         return 0
-    print_lessons(lessons, f"Sessions on {period}")
-    candidates = [lesson for lesson in lessons if lesson.signable]
-    if not candidates:
+    print_lessons(lessons, args.date)
+    if not any(lesson.is_open for lesson in lessons):
         print("No open attendance sheet.")
         return 0
 
-    chosen = candidates if args.all else select_lessons(candidates)
+    chosen = [lesson for lesson in lessons if lesson.is_open] if args.all else select_lessons(lessons)
     if not chosen:
         print("Nothing selected.")
         return 0
@@ -328,10 +290,6 @@ def check_and_sign(client, cfg, lesson, day, png, dry_run):
     if any(other.code == lesson.code and other.signed for other in client.lessons(day)):
         return "already signed"
     return "failed" if sign_lessons(client, [lesson], png, dry_run) else "signed"
-
-
-def parse_day(value):
-    return dt.datetime.strptime(value, "%d/%m/%Y").date()
 
 
 def interval(value):
@@ -584,13 +542,9 @@ def build_parser():
     sub = p.add_subparsers(title="commands", metavar="<command>")
 
     ps = sub.add_parser("sign", parents=[common], help="list attendance sheets and sign open ones")
-    ps.add_argument("--all", action="store_true",
-                    help="sign every open sheet (and past ones with --since) without asking")
-    ps.add_argument("--date", type=parse_day, default=dt.date.today(),
-                    help="day to list (DD/MM/YYYY, default today)")
-    ps.add_argument("--since", type=parse_day, nargs="?", const=True, metavar="DD/MM/YYYY",
-                    help="also offer unsigned sessions from this day on "
-                         f"(default {SINCE_DAYS} days before --date, weekends skipped)")
+    ps.add_argument("--all", action="store_true", help="sign every open sheet without asking")
+    ps.add_argument("--date", type=lambda s: dt.datetime.strptime(s, "%d/%m/%Y").date(),
+                    default=dt.date.today(), help="day to list (DD/MM/YYYY, default today)")
     ps.add_argument("--signature", type=Path, help="PNG signature image")
     ps.add_argument("--dry-run", action="store_true", help="list and select, but do not sign")
     ps.set_defaults(func=cmd_sign)
@@ -663,7 +617,6 @@ def ask_set(unset=False):
 # (title, argv or a callable returning it); None quits or goes back.
 MAIN_MENU = [
     ("Sign attendance sheets", ["sign"]),
-    ("Sign past attendance sheets", ["sign", "--since"]),
     ("Watch the current lesson", ["watch"]),
     ("Settings", None),
     ("Draw a signature", ["signature", "draw"]),

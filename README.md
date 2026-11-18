@@ -113,13 +113,9 @@ nety sign              # list today's unsigned sessions, pick which to sign
 nety sign --all        # sign every open session without asking
 nety sign --dry-run    # list and select, do not sign
 nety sign --date 20/10/2026 --verbose
-nety sign --since      # also offer unsigned sessions of the last 7 days (weekends skipped)
-nety sign --since 01/10/2026 --all  # sign every open or past unsigned session
 ```
 
 A table lists the day's unsigned sessions. The prompt offers only open ones; a single open session is pre-checked. Use Space to toggle, Enter to confirm, Ctrl-C to cancel.
-
-With `--since`, the table and the prompt also list unsigned sessions from that day up to the day before `--date` (unchecked). The server tells only which sheet is open now, so nety cannot check whether a past sheet still accepts a signature: it tries, and reports a refusal as `FAILED`. The menu entry "Sign past attendance sheets" runs `nety sign --since`.
 
 ### Watch
 
