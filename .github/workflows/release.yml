@@ -51,7 +51,7 @@ jobs:
             asset: nety-linux-x86_64
           - os: ubuntu-22.04-arm
             asset: nety-linux-arm64
-          - os: macos-14
+          - os: macos-15
             asset: nety-macos-arm64
           - os: windows-2022
             asset: nety-windows-x86_64.exe
