@@ -295,6 +295,19 @@ class FakeClient:
     def open_lesson_code(self):
         return self._open_code
 
+    def seance(self, code):
+        return None
+
+
+def test_open_lesson_outside_schedule_is_named():
+    class Named(FakeClient):
+        def seance(self, code):
+            return Lesson(code, "Maths", 510, 750, day=dt.date(2026, 10, 17))
+
+    unsigned = cli.unsigned_lessons(Named([Lesson(2)], 9), dt.date(2026, 10, 19))
+    opened = [lesson for lesson in unsigned if lesson.is_open]
+    assert [lesson.label for lesson in opened] == ["17/10 08h30-12h30 Maths"]
+
 
 def test_open_lesson_already_signed_is_not_listed():
     lessons = [Lesson(1, signed=True), Lesson(2)]

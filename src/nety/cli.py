@@ -85,7 +85,8 @@ def unsigned_lessons(client, date):
         # A lesson may be listed twice (one entry per resource): flag every copy.
         opened = [lesson for lesson in lessons if lesson.code == open_code]
         if open_code and not opened:
-            opened = [Lesson(open_code)]
+            # Not in today's schedule: probably an earlier day's lesson. Name it.
+            opened = [client.seance(open_code) or Lesson(open_code)]
             unsigned.append(opened[0])
         for lesson in opened:
             lesson.is_open = True

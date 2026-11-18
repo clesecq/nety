@@ -29,6 +29,28 @@ def test_lessons_parse_planning(nety, requests_mock):
     assert lessons[0].room == "E-011"
 
 
+def test_seance_by_code(nety, requests_mock):
+    requests_mock.get(re.compile(r".*/planning/jour/ajax/"), text=fixture("planning_day.json"))
+    nety.lessons(DAY)
+    detail = requests_mock.get(re.compile(r".*/planning/seance/4819992/7500/1000001"),
+                               text=fixture("seance.html"))
+    lesson = nety.seance(4819992)
+    assert detail.called
+    assert (lesson.course, lesson.time, lesson.day) == (
+        "Informatique & Bureautique", "08h30-12h30", dt.date(2026, 10, 17))
+    assert lesson.label == "17/10 08h30-12h30 Informatique & Bureautique"
+
+
+def test_seance_unknown(nety, requests_mock):
+    assert nety.seance(1) is None  # planning not loaded: no resource
+    requests_mock.get(re.compile(r".*/planning/jour/ajax/"), text=fixture("planning_day.json"))
+    nety.lessons(DAY)
+    requests_mock.get(re.compile(r".*/planning/seance/"), status_code=500)
+    assert nety.seance(1) is None
+    requests_mock.get(re.compile(r".*/planning/seance/"), text="<div>nothing</div>")
+    assert nety.seance(1) is None
+
+
 def test_unknown_lesson_label():
     assert Lesson(42).label == "? ?"
 

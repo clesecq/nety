@@ -35,8 +35,7 @@ def select_lessons(lessons):
     """Ask which open sheets to sign. Returns the chosen lessons."""
     open_lessons = [lesson for lesson in lessons if lesson.is_open]
     choices = [
-        questionary.Choice(f"{lesson.time}  {lesson.course}", value=lesson,
-                           checked=len(open_lessons) == 1)
+        questionary.Choice(lesson.label, value=lesson, checked=len(open_lessons) == 1)
         for lesson in open_lessons
     ]
     return questionary.checkbox("Sign which?", choices=choices).unsafe_ask() or []
@@ -49,7 +48,8 @@ def print_lessons(lessons, date):
     for lesson in lessons:
         status = "open" if lesson.is_open else "not open"
         # Text() keeps server strings such as "[bold]" from being read as markup.
-        table.add_row(*map(Text, (lesson.time, lesson.course, lesson.teacher, lesson.room)),
+        when = (f"{lesson.day:%d/%m} " if lesson.day else "") + lesson.time
+        table.add_row(*map(Text, (when, lesson.course, lesson.teacher, lesson.room)),
                       Text(status, style="bold green" if lesson.is_open else "dim"),
                       style=None if lesson.is_open else "dim")
     Console().print(table)

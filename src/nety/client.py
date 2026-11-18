@@ -1,6 +1,8 @@
 """HTTP calls to the Netypareo extranet."""
 
 import base64
+import datetime as dt
+import html
 import json
 import logging
 import re
@@ -53,6 +55,8 @@ class Lesson:
     room: str = ""
     signed: bool = False
     is_open: bool = False
+    # Set only for a lesson outside the day's schedule: the label then names the day.
+    day: dt.date | None = None
 
     @property
     def time(self):
@@ -62,7 +66,8 @@ class Lesson:
 
     @property
     def label(self):
-        return f"{self.time} {self.course}"
+        prefix = f"{self.day:%d/%m} " if self.day else ""
+        return f"{prefix}{self.time} {self.course}"
 
 
 class Netypareo:
@@ -71,6 +76,8 @@ class Netypareo:
         self.http.headers["User-Agent"] = USER_AGENT
         # Login of the current session, set by login() and restore_cookies().
         self.user = None
+        # (type, code) of the planning's resource, learned from lessons(); needed by seance().
+        self.resource = None
 
     def _xhr_get(self, path):
         # The browser adds a cache-busting timestamp to every XHR GET.
@@ -147,6 +154,7 @@ class Netypareo:
         lessons = []
         for semaine in resp.json().get("semaines", []):
             for ressource in semaine.get("ressources", []):
+                self.resource = (ressource.get("type"), ressource.get("code"))
                 for s in ressource.get("seances", []):
                     detail = s.get("detail") or []
                     start = s.get("minuteDebut", 0)
@@ -160,6 +168,23 @@ class Netypareo:
                         signed=any(SIGNED_ICON in i.get("classe", "") for i in s.get("icones", [])),
                     ))
         return sorted(lessons, key=lambda lesson: lesson.start)
+
+    def seance(self, code):
+        """A lesson looked up by code (any day), with its day set; None if unknown."""
+        if not self.resource:
+            return None
+        resp = self._xhr_get(f"/planning/seance/{code}/{self.resource[0]}/{self.resource[1]}")
+        if not resp.ok:
+            log(f"seance {code}: HTTP {resp.status_code}")
+            return None
+        m = re.search(r'class="nom-matiere[^"]*">(.*?)</span>\s*de (\d+)h(\d+) à (\d+)h(\d+) '
+                      r'le (\d+)/(\d+)/(\d+)', resp.text, re.S)
+        if not m:
+            log(f"seance {code}: no title")
+            return None
+        h1, m1, h2, m2, d, mo, y = map(int, m.groups()[1:])
+        return Lesson(code, html.unescape(m.group(1)).strip(), h1 * 60 + m1, h2 * 60 + m2,
+                      day=dt.date(y, mo, d))
 
     def open_lesson_code(self):
         """Code of the lesson the server offers for signing, or None."""
